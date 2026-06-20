@@ -11,163 +11,201 @@ import {
   Platform,
   Image,
   Linking,
+  Alert
 } from 'react-native';
+
 import { router } from 'expo-router';
 
 export default function SignupScreen() {
+
   const [nom, setNom] = useState('');
   const [email, setEmail] = useState('');
   const [telephone, setTelephone] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  const handleSignup = () => {
-    console.log({
-      nom,
-      email,
-      telephone,
-      password,
-      confirmPassword,
-    });
+  // ⚠️ CHANGE IP selon emulator / téléphone
+const API_URL = 'http://192.168.1.16:3000';
+const isValidEmail = (email) => {
+  const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return regex.test(email);
+};
+  const handleSignup = async () => {
+
+    // 1. validation
+    if (!nom || !email || !telephone || !password || !confirmPassword) {
+      Alert.alert('Erreur', 'Tous les champs sont obligatoires');
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      Alert.alert('Erreur', 'Les mots de passe ne correspondent pas');
+      return;
+    }
+
+
+  if (!isValidEmail(email)) {
+    Alert.alert('Erreur', 'Email invalide ❌');
+    return;
+  }
+    try {
+      setLoading(true);
+
+      // 2. call backend
+      const response = await fetch(`${API_URL}/signup`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          nom,
+          email,
+          telephone,
+          password,
+        }),
+      });
+
+      const data = await response.json();
+
+      console.log('Signup response:', data);
+
+      // 3. error backend
+      if (!response.ok) {
+        Alert.alert('Erreur', data.message || 'Signup échoué');
+        return;
+      }
+
+      // 4. success
+      Alert.alert('Succès', 'Compte créé avec succès ✅');
+
+      // retour login
+      router.back();
+
+    } catch (error) {
+      console.log(error);
+      Alert.alert('Erreur', 'Serveur inaccessible ❌');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        bounces={false}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Header */}
+      <ScrollView contentContainerStyle={styles.scroll}>
+
+        {/* HEADER */}
         <View style={styles.header}>
-          <TouchableOpacity
-            style={styles.backBtn}
-            onPress={() => router.back()}
-          >
+          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
             <Text style={styles.backText}>‹ Retour</Text>
           </TouchableOpacity>
 
-          <View style={styles.logoWrapper}>
-            <Image
-              source={require('../../assets/favicon.png')}
-              style={styles.logo}
-              resizeMode="contain"
-            />
-          </View>
+    <View style={styles.logoWrapper}>
+  <Image
+    source={require('../../assets/favicon.png')}
+    style={styles.logo}
+    resizeMode="contain"
+  />
+</View>
 
           <Text style={styles.welcomeTitle}>Créer un compte</Text>
-          <Text style={styles.welcomeSub}>
-            Rejoignez votre espace de travail
-          </Text>
+          <Text style={styles.welcomeSub}>Rejoignez votre espace</Text>
         </View>
 
-        {/* Vague */}
         <View style={styles.wave} />
 
-        {/* Formulaire */}
+        {/* FORM */}
         <View style={styles.form}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          >
-            {/* Nom */}
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+
+            {/* NOM */}
             <Text style={styles.label}>Nom complet</Text>
             <View style={styles.inputBox}>
               <Text style={styles.inputIcon}>👤</Text>
               <TextInput
                 style={styles.input}
-                placeholder="Prénom Nom"
-                placeholderTextColor="#bbb"
                 value={nom}
                 onChangeText={setNom}
+                placeholder="Nom"
               />
             </View>
 
-            {/* Email */}
-            <Text style={styles.label}>Adresse e-mail</Text>
+            {/* EMAIL */}
+            <Text style={styles.label}>Email</Text>
             <View style={styles.inputBox}>
               <Text style={styles.inputIcon}>📧</Text>
               <TextInput
                 style={styles.input}
-                placeholder="votre@email.com"
-                placeholderTextColor="#bbb"
                 value={email}
                 onChangeText={setEmail}
+                placeholder="email@gmail.com"
                 keyboardType="email-address"
                 autoCapitalize="none"
               />
             </View>
 
-            {/* Téléphone */}
-            <Text style={styles.label}>Numéro de téléphone</Text>
+            {/* TELEPHONE */}
+            <Text style={styles.label}>Téléphone</Text>
             <View style={styles.inputBox}>
               <Text style={styles.inputIcon}>📱</Text>
               <TextInput
                 style={styles.input}
-                placeholder="+216 XX XXX XXX"
-                placeholderTextColor="#bbb"
                 value={telephone}
                 onChangeText={setTelephone}
+                placeholder="+216"
                 keyboardType="phone-pad"
               />
             </View>
 
-            {/* Mot de passe */}
+            {/* PASSWORD */}
             <Text style={styles.label}>Mot de passe</Text>
             <View style={styles.inputBox}>
               <Text style={styles.inputIcon}>🔒</Text>
               <TextInput
                 style={styles.input}
-                placeholder="••••••••"
-                placeholderTextColor="#bbb"
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry={!showPassword}
               />
-              <TouchableOpacity
-                onPress={() => setShowPassword(!showPassword)}
-              >
+              <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
                 <Text style={styles.inputIcon}>
                   {showPassword ? '🙈' : '👁️'}
                 </Text>
               </TouchableOpacity>
             </View>
 
-            {/* Confirmation */}
-            <Text style={styles.label}>Confirmer le mot de passe</Text>
+            {/* CONFIRM */}
+            <Text style={styles.label}>Confirmation</Text>
             <View style={styles.inputBox}>
               <Text style={styles.inputIcon}>🔒</Text>
               <TextInput
                 style={styles.input}
-                placeholder="••••••••"
-                placeholderTextColor="#bbb"
                 value={confirmPassword}
                 onChangeText={setConfirmPassword}
                 secureTextEntry={!showPassword}
               />
             </View>
 
-            {/* Bouton */}
+            {/* BUTTON */}
             <TouchableOpacity
-              style={styles.signupButton}
+              style={[styles.signupButton, loading && { opacity: 0.6 }]}
               onPress={handleSignup}
+              disabled={loading}
             >
               <Text style={styles.signupButtonText}>
-                Sinscrire ›
+                {loading ? 'Chargement...' : 'S’inscrire ›'}
               </Text>
             </TouchableOpacity>
+
           </KeyboardAvoidingView>
         </View>
 
-        {/* Footer */}
+        {/* FOOTER */}
         <View style={styles.footer}>
           <Text style={styles.footerText}>
             Déjà un compte ?
-            <Text
-              style={styles.footerLink}
-              onPress={() => router.back()}
-            >
+            <Text style={styles.footerLink} onPress={() => router.back()}>
               {' '}Se connecter ›
             </Text>
           </Text>
@@ -176,157 +214,136 @@ export default function SignupScreen() {
             © 2026{' '}
             <Text
               style={styles.copyrightLink}
-              onPress={() =>
-                Linking.openURL('https://vanoiserie.tn/')
-              }
+              onPress={() => Linking.openURL('https://vanoiserie.tn/')}
             >
               Dr. Oetker Vanoise
             </Text>
-            {' '}Tous droits réservés.
           </Text>
         </View>
+
       </ScrollView>
     </SafeAreaView>
   );
 }
 
+
+/* ================= STYLE ================= */
+
+const BROWN = '#5C3317';
 const RED = '#C0202A';
-const BG = '#FDF6F0';
+const CREAM = '#F5E6C8';
+const CREAM2 = '#FDF6EE';
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: BG,
-  },
+container: {
+  flex: 1,
+  backgroundColor: CREAM2,
+},  scroll: { flexGrow: 1 },
 
-  scroll: {
-    flexGrow: 1,
-  },
+header: {
+  backgroundColor: CREAM,
+  paddingTop: 24,
+  paddingBottom: 55,
+  alignItems: 'center',
+  paddingHorizontal: 24,
+},
 
-  header: {
-    backgroundColor: RED,
-    paddingTop: 20,
-    paddingBottom: 60,
-    alignItems: 'center',
-    paddingHorizontal: 24,
-  },
+  backBtn: { alignSelf: 'flex-start', marginLeft: 20 },
+backText: {
+  color: BROWN,
+  fontSize: 14,
+  fontWeight: '600',
+},
 
-  backBtn: {
-    alignSelf: 'flex-start',
-    marginBottom: 16,
-  },
+welcomeTitle: {
+  fontSize: 24,
+  fontWeight: '700',
+  color: BROWN,
+  marginBottom: 4,
+},
 
-  backText: {
-    color: '#fff',
-    fontSize: 15,
-  },
+welcomeSub: {
+  fontSize: 14,
+  color: '#8B6347',
+},
 
+ wave: {
+  height: 35,
+  backgroundColor: CREAM2,
+  borderTopLeftRadius: 40,
+  borderTopRightRadius: 40,
+  marginTop: -35,
+},
   logoWrapper: {
-    width: 90, height: 90,
-    borderRadius: 20,
+    width: 100, height: 100,
+
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 16,
-    padding: 8,
   },
-  logo: { width: 100, height: 120 },
-  welcomeTitle: {
-    fontSize: 17, fontWeight: '700',
-    color: '#fff', marginBottom: 6,
-  },
+  logo: { width: 280, height: 120 },
 
 
+  form: { padding: 20 },
 
+label: {
+  fontSize: 13,
+  fontWeight: '600',
+  color: BROWN,
+  marginBottom: 7,
+  marginTop: 6,
+},
+ inputBox: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  backgroundColor: '#fff',
+  borderRadius: 14,
+  borderWidth: 1.5,
+  borderColor: '#E8D5BC',
+  paddingHorizontal: 14,
+  height: 52,
+  marginBottom: 14,
+  shadowColor: BROWN,
+  shadowOffset: { width: 0, height: 2 },
+  shadowOpacity: 0.06,
+  shadowRadius: 4,
+  elevation: 2,
+},
+input: {
+  flex: 1,
+  fontSize: 15,
+  color: '#3D1F0A',
+},
 
-  welcomeSub: {
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.85)',
-  },
+inputIcon: {
+  fontSize: 16,
+  marginRight: 8,
+},
+signupButton: {
+  backgroundColor: BROWN,
+  borderRadius: 30,
+  height: 52,
+  alignItems: 'center',
+  justifyContent: 'center',
+  marginTop: 20,
+  shadowColor: BROWN,
+  shadowOffset: { width: 0, height: 4 },
+  shadowOpacity: 0.3,
+  shadowRadius: 8,
+  elevation: 5,
+},
+signupButtonText: {
+  color: '#fff',
+  fontSize: 16,
+  fontWeight: '700',
+},
 
-  wave: {
-    height: 40,
-    backgroundColor: BG,
-    borderTopLeftRadius: 40,
-    borderTopRightRadius: 40,
-    marginTop: -40,
-  },
+  footer: { alignItems: 'center', marginTop: 20 },
 
-  form: {
-    paddingHorizontal: 24,
-    backgroundColor: BG,
-  },
+  footerText: { color: '#666' },
 
-  label: {
-    fontSize: 13,
-    color: '#333',
-    marginBottom: 8,
-    marginTop: 4,
-    fontWeight: '500',
-  },
+  footerLink: { color: RED },
 
-  inputBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#E8E0D8',
-    borderRadius: 12,
-    height: 50,
-    paddingHorizontal: 14,
-    marginBottom: 16,
-  },
+  copyright: { fontSize: 11, marginTop: 10 },
 
-  inputIcon: {
-    fontSize: 16,
-    marginRight: 8,
-  },
-
-  input: {
-    flex: 1,
-    fontSize: 15,
-    color: '#222',
-  },
-
-  signupButton: {
-    backgroundColor: RED,
-    height: 52,
-    borderRadius: 30,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 10,
-    marginBottom: 28,
-  },
-
-  signupButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-
-  footer: {
-    alignItems: 'center',
-    paddingBottom: 24,
-  },
-
-  footerText: {
-    fontSize: 13,
-    color: '#666',
-    marginBottom: 12,
-  },
-
-  footerLink: {
-    color: RED,
-    fontWeight: '600',
-  },
-
-  copyright: {
-    fontSize: 11,
-    color: '#999',
-    textAlign: 'center',
-  },
-
-  copyrightLink: {
-    color: RED,
-    textDecorationLine: 'underline',
-  },
+  copyrightLink: { color: RED },
 });

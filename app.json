@@ -1,5 +1,10 @@
 {
   "expo": {
+     "splash": {
+      "image": "./assets/favicon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F5E6C8"
+    },
     "name": "stagevanoise",
     "slug": "stagevanoise",
     "version": "1.0.0",
