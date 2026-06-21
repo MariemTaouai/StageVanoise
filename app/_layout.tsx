@@ -33,8 +33,9 @@ export default function RootLayout() {
         <Stack.Screen name="splash" />
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(tabs)" />
-        <Stack.Screen name="(user)" />
+  <Stack.Screen name="(user)" options={{ gestureEnabled: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
+        
       </Stack>
 
       <StatusBar style="auto" />
