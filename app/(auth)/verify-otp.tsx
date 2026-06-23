@@ -18,7 +18,7 @@ export default function VerifyOtpScreen() {
   const params = useLocalSearchParams<{ email?: string }>();
   const email = typeof params.email === 'string' ? params.email : '';
 
-const API_URL = 'http://192.168.1.16:3000';
+const API_URL = 'http://10.197.21.178:3000';
   const handleVerifyOtp = async (): Promise<void> => {
     const cleanCode = code.trim();
 

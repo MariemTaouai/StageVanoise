@@ -11,7 +11,7 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-const API_URL = 'http://192.168.1.16:3000';  
+const API_URL = 'http://10.197.21.178:3000';  
 const handleLogin = async () => {
   const cleanEmail = email.trim();
   const cleanPassword = password.trim();
@@ -61,7 +61,11 @@ const handleLogin = async () => {
 
     // ── REDIRECTION CONDITIONNELLE SELON LE RÔLE ──
   // ── REDIRECTION CONDITIONNELLE SELON LE RÔLE ──
-if (data.user.role === 'GA sales Controller') {
+  
+if (data.user.role === 'Production Controller') {
+  // Chemin absolu correct pour Expo Router
+  router.replace('/(user)/DeclarationProduction');}
+  else if (data.user.role === 'GA sales Controller') {
   // Chemin absolu correct pour Expo Router
   router.replace('/(user)/SalesDashboard');
 } else {

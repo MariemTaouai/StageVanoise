@@ -18,7 +18,7 @@ export default function ForgotPasswordScreen() {
 
   // ⚠️ Vérifie ton 'ipconfig' dans ton terminal Windows.
   // Si tu utilises l'émulateur Android officiel sur ton PC, remplace par 'http://10.0.2.2:3000'
-const API_URL = 'http://192.168.1.16:3000';
+const API_URL = 'http://10.197.21.178:3000';
   const handleForgotPassword = async (): Promise<void> => {
     console.log("[DEBUG] Bouton cliqué - handleForgotPassword appelée");
 

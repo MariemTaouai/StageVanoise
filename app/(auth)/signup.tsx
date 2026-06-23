@@ -27,7 +27,7 @@ export default function SignupScreen() {
   const [loading, setLoading] = useState(false);
 
   // ⚠️ CHANGE IP selon emulator / téléphone
-const API_URL = 'http://192.168.1.16:3000';
+const API_URL = 'http://10.197.21.178:3000';
 const isValidEmail = (email) => {
   const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return regex.test(email);
