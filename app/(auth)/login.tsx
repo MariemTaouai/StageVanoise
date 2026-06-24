@@ -11,7 +11,7 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-const API_URL = 'http://10.197.21.178:3000';  
+const API_URL = 'http://172.16.11.176:3000';  
 const handleLogin = async () => {
   const cleanEmail = email.trim();
   const cleanPassword = password.trim();

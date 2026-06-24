@@ -1,107 +1,172 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import TcpSocket from 'react-native-tcp-socket';
 import { router, Stack } from "expo-router";
+
 import React, { useEffect, useRef, useState } from "react";
+
 import {
-    ActivityIndicator,
-    Alert,
-    Animated,
-    Dimensions,
-    Image,
-    ScrollView,
-    StatusBar,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
-    Linking
+  ActivityIndicator,
+  Alert,
+  Animated,
+  Dimensions,
+  Image,
+  Linking,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
+
 import { SafeAreaView } from "react-native-safe-area-context";
+
 import { generateZplLabel, sendToPrinter } from "../../Services/printService";
 
-const API_URL = "http://10.197.21.178:3000";
+const API_URL = "http://172.16.11.176:3000";
+
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
+
 const SIDEBAR_WIDTH = 280;
 
 export interface ProductionLine {
   id: string;
-  lot: string;
+
   slot: string;
+
   quantite: string;
 }
 
 export interface ArticleOF {
   ZITMREF: string;
+
   ZITMDES: string;
-  ZPCU?: string;        // ✅ Ajouté pour le ZPL
-  ZPCUSTUCOE?: number;  // ✅ Ajouté pour le ZPL
-  ZSHL?: number;        // ✅ Ajouté pour le ZPL
+  NUMOF?: string;    
+
+  ZPCU?: string;
+
+  ZPCUSTUCOE?: number;
+
+  ZSHL?: number;
+
+  quantite?: number;
+
+  unite?: string;
 }
 
 export interface UserData {
   nom?: string;
+
   matricule?: string;
 }
 
 /* ─── Palette Dr. Oetker Vanoise ─────────────────────────────── */
+
 const C = {
   bg: "#FFFFFF",
+
   surface: "#FDF6EE",
+
   cream: "#F5E6C8",
+
   red: "#C0202A",
+
   redSoft: "#FDF0F0",
+
   green: "#2E7D32",
+
   greenSoft: "#F0FDF4",
+
   blue: "#2563EB",
+
   ink: "#1F1610",
+
   inkMid: "#3E2723",
+
   inkLight: "#7D6E65",
+
   inkFaint: "#C8B8A8",
+
   border: "#EFE5D3",
 };
 
 const Divider = ({ label }: { label: string }) => (
   <View style={div.row}>
     <Text style={div.txt}>{label}</Text>
+
     <View style={div.line} />
   </View>
 );
 
 export default function ProductionDeclarationScreen() {
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
+const [isPrinting, setIsPrinting] = useState(false);
   const [loading, setLoading] = useState<boolean>(true);
+
   const [nom, setNom] = useState<string>("");
+
   const [matricule, setMatricule] = useState<string>("MTR-2026");
-const [dernierePaletteLignes, setDernierePaletteLignes] = useState<ProductionLine[]>([]);
-  const [activeTab, setActiveTab] = useState<"declaration" | "historique">("declaration");
+
+  const [dernierePaletteLignes, setDernierePaletteLignes] = useState<any[]>([]);
+
+  const [activeTab, setActiveTab] = useState<"declaration" | "historique">(
+    "declaration",
+  );
+
   const [historiquePalettes, setHistoriquePalettes] = useState<any[]>([]);
+
   const [loadingHist, setLoadingHist] = useState<boolean>(false);
 
   // États pour la logique de Production & Recherche d'OF
+
   const [ordresFabrication, setOrdresFabrication] = useState<ArticleOF[]>([]);
+
   const [searchText, setSearchText] = useState<string>("");
+
   const [selectedOF, setSelectedOF] = useState<string>("");
-  const [selectedOFData, setSelectedOFData] = useState<ArticleOF | null>(null); // ← AJOUT
+
+  const [selectedOFData, setSelectedOFData] = useState<ArticleOF | null>(null);
+
   const [showDropdown, setShowDropdown] = useState<boolean>(false);
 
-  const [lignesProduction, setLignesProduction] = useState<ProductionLine[]>([]);
+  // NOUVEAU : État pour le lot général unique du dessus
+
+  const [lotGlobal, setLotGlobal] = useState<string>("");
+
+  const [lignesProduction, setLignesProduction] = useState<ProductionLine[]>(
+    [],
+  );
+
   const [paletteGeneree, setPaletteGeneree] = useState<string | null>(null);
 
   const slideAnim = useRef(new Animated.Value(-SIDEBAR_WIDTH)).current;
+
   const overlayAnim = useRef(new Animated.Value(0)).current;
+
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
-  // ── Logic Pagination & Recherche Améliorée ──
   const [page, setPage] = useState<number>(1);
+
   const [searchTerm, setSearchTerm] = useState<string>("");
+
   const [hasMore, setHasMore] = useState<boolean>(true);
 
   useEffect(() => {
     if (loading && ordresFabrication.length === 0) {
       Animated.loop(
         Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1.1, duration: 800, useNativeDriver: true }),
-          Animated.timing(pulseAnim, { toValue: 1.0, duration: 800, useNativeDriver: true }),
+          Animated.timing(pulseAnim, {
+            toValue: 1.1,
+            duration: 800,
+            useNativeDriver: true,
+          }),
+
+          Animated.timing(pulseAnim, {
+            toValue: 1.0,
+            duration: 800,
+            useNativeDriver: true,
+          }),
         ]),
       ).start();
     } else {
@@ -111,34 +176,61 @@ const [dernierePaletteLignes, setDernierePaletteLignes] = useState<ProductionLin
 
   const openSidebar = () => {
     setSidebarOpen(true);
+
     Animated.parallel([
-      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 100, friction: 14 }),
-      Animated.timing(overlayAnim, { toValue: 1, duration: 250, useNativeDriver: true }),
+      Animated.spring(slideAnim, {
+        toValue: 0,
+        useNativeDriver: true,
+        tension: 100,
+        friction: 14,
+      }),
+
+      Animated.timing(overlayAnim, {
+        toValue: 1,
+        duration: 250,
+        useNativeDriver: true,
+      }),
     ]).start();
   };
 
   const closeSidebar = () => {
     Animated.parallel([
-      Animated.spring(slideAnim, { toValue: -SIDEBAR_WIDTH, useNativeDriver: true, tension: 100, friction: 14 }),
-      Animated.timing(overlayAnim, { toValue: 0, duration: 200, useNativeDriver: true }),
+      Animated.spring(slideAnim, {
+        toValue: -SIDEBAR_WIDTH,
+        useNativeDriver: true,
+        tension: 100,
+        friction: 14,
+      }),
+
+      Animated.timing(overlayAnim, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }),
     ]).start(() => setSidebarOpen(false));
   };
 
   const handleLogout = async () => {
     closeSidebar();
+
     await AsyncStorage.clear();
+
     router.replace("/login");
   };
 
   const fetchHistorique = async (pageNum = 1, currentSearch = "") => {
     try {
       setLoadingHist(true);
+
       const res = await fetch(
         `${API_URL}/api/production/historique?page=${pageNum}&search=${encodeURIComponent(currentSearch)}`,
       );
+
       if (res.ok) {
         const data = await res.json();
+
         setHasMore(data.length >= 5);
+
         setHistoriquePalettes(data);
       }
     } catch (e) {
@@ -151,35 +243,51 @@ const [dernierePaletteLignes, setDernierePaletteLignes] = useState<ProductionLin
   useEffect(() => {
     if (activeTab === "historique") {
       setPage(1);
+
       const delayDebounce = setTimeout(() => {
         fetchHistorique(1, searchTerm);
       }, 300);
+
       return () => clearTimeout(delayDebounce);
     }
   }, [searchTerm, activeTab]);
 
   const handleNextPage = () => {
     if (loadingHist || !hasMore) return;
+
     const nextPage = page + 1;
+
     setPage(nextPage);
+
     fetchHistorique(nextPage, searchTerm);
   };
 
   const handlePrevPage = () => {
     if (loadingHist || page <= 1) return;
+
     const prevPage = page - 1;
+
     setPage(prevPage);
+
     fetchHistorique(prevPage, searchTerm);
   };
 
   useEffect(() => {
     const loadUser = async () => {
       const raw = await AsyncStorage.getItem("user");
-      if (!raw) { router.replace("/login"); return; }
+
+      if (!raw) {
+        router.replace("/login");
+        return;
+      }
+
       const parsedUser: UserData = JSON.parse(raw);
+
       setNom(parsedUser.nom || "Opérateur");
+
       if (parsedUser.matricule) setMatricule(parsedUser.matricule);
     };
+
     loadUser();
   }, []);
 
@@ -189,8 +297,10 @@ const [dernierePaletteLignes, setDernierePaletteLignes] = useState<ProductionLin
         const res = await fetch(
           `${API_URL}/api/production/of?search=${encodeURIComponent(searchText)}`,
         );
+
         if (res.ok) {
           const data = await res.json();
+
           setOrdresFabrication(data);
         }
       } catch (e) {
@@ -199,138 +309,226 @@ const [dernierePaletteLignes, setDernierePaletteLignes] = useState<ProductionLin
         setLoading(false);
       }
     };
-    const delayDebounce = setTimeout(() => { fetchOFs(); }, 300);
+
+    const delayDebounce = setTimeout(() => {
+      fetchOFs();
+    }, 300);
+
     return () => clearTimeout(delayDebounce);
   }, [searchText]);
 
   const ajouterLigne = () => {
     setPaletteGeneree(null);
+
     const nouvelleLigne: ProductionLine = {
       id: Math.random().toString(),
-      lot: "",
+
       slot: "",
+
       quantite: "",
+      
     };
+
     setLignesProduction([...lignesProduction, nouvelleLigne]);
   };
 
-  const updateLigne = (id: string, champ: keyof ProductionLine, valeur: string) => {
-    setLignesProduction(lignesProduction.map((ligne) =>
-      ligne.id === id ? { ...ligne, [champ]: valeur } : { ...ligne }
-    ));
+  const updateLigne = (
+    id: string,
+    champ: keyof ProductionLine,
+    valeur: string,
+  ) => {
+    setLignesProduction(
+      lignesProduction.map((ligne) =>
+        ligne.id === id ? { ...ligne, [champ]: valeur } : { ...ligne },
+      ),
+    );
   };
 
   const supprimerLigne = (id: string) => {
     setLignesProduction(lignesProduction.filter((l) => l.id !== id));
   };
-const validerDeclaration = async () => {
+
+  const validerDeclaration = async () => {
     if (!selectedOF) {
-      Alert.alert("Erreur", "Veuillez sélectionner un Ordre de Fabrication (OF).");
+      Alert.alert(
+        "Erreur",
+        "Veuillez sélectionner un Ordre de Fabrication (OF).",
+      );
+
       return;
     }
+
+    if (!lotGlobal.trim()) {
+      Alert.alert("Erreur", "Veuillez renseigner le Numéro de Lot global.");
+
+      return;
+    }
+
     if (lignesProduction.length === 0) {
-      Alert.alert("Erreur", "Veuillez ajouter au moins une ligne à la palette.");
+      Alert.alert(
+        "Erreur",
+        "Veuillez ajouter au moins une ligne à la palette.",
+      );
+
       return;
     }
-    if (!lignesProduction.every((l) => l.lot && l.slot && l.quantite)) {
-      Alert.alert("Erreur", "Veuillez remplir tous les champs (LOT, SLOT, Quantité).");
+
+    if (!lignesProduction.every((l) => l.slot && l.quantite)) {
+      Alert.alert(
+        "Erreur",
+        "Veuillez remplir le SLOT et la Quantité pour chaque ligne.",
+      );
+
       return;
     }
 
     try {
       setLoading(true);
+
       const listBackend = lignesProduction.map((l) => ({
         slot: l.slot,
+
         qty: l.quantite,
-        lot: l.lot,
-        ZUOM: "CAR",
+
+        lot: lotGlobal, // Assigne automatiquement le lot unique global du dessus à chaque ligne
+
+        ZUOM: selectedOFData?.unite || "CAR",
       }));
 
       const response = await fetch(`${API_URL}/api/production/declarer`, {
         method: "POST",
+
         headers: { "Content-Type": "application/json" },
+
         body: JSON.stringify({ of: selectedOF, list: listBackend, matricule }),
       });
 
       const jsonResult = await response.json();
 
       if (response.ok && jsonResult.status === "success") {
-        // 1. On stocke le numéro généré APART
         setPaletteGeneree(jsonResult.PALNUM);
-        setDernierePaletteLignes(lignesProduction);
-        Alert.alert("Succès", `Déclaration enregistrée ! Palette ${jsonResult.PALNUM} créée.`);
-        
-        // 2. On vide l'interface de saisie pour la palette suivante
+
+        const lignesFormatteesSql = lignesProduction.map((l) => ({
+          PALNUM: jsonResult.PALNUM,
+
+          slot: l.slot,
+
+          qty: l.quantite,
+
+          LOT: lotGlobal,
+        }));
+
+        setDernierePaletteLignes(lignesFormatteesSql);
+
+        Alert.alert(
+          "Succès",
+          `Déclaration enregistrée ! Palette ${jsonResult.PALNUM} créée.`,
+        );
+
         setLignesProduction([]);
-        
-        // REMARQUE : Ne vide PAS `selectedOF` ni `searchText` ici 
-        // pour que la carte d'impression en bas puisse toujours afficher les infos de l'OF !
-        
       } else {
-        Alert.alert("Erreur Serveur", jsonResult.error || "Une erreur est survenue.");
+        Alert.alert(
+          "Erreur Serveur",
+          jsonResult.error || "Une erreur est survenue.",
+        );
       }
     } catch (error) {
       console.error(error);
+
       Alert.alert("Erreur", "Impossible de contacter le serveur backend.");
     } finally {
       setLoading(false);
     }
   };
-const imprimerPalette = async () => {
-  if (!paletteGeneree) {
-    Alert.alert("Erreur", "Aucune palette n'a été générée pour l'impression.");
-    return;
-  }
 
-  const zpl = generateZplLabel({
-    palette: paletteGeneree,
-    of: selectedOF,
-    designation: selectedOFData?.ZITMDES || selectedOF,
-    matricule: matricule,
-    lignes: dernierePaletteLignes, // ✅ Utilise la sauvegarde
-    zpcu: selectedOFData?.ZPCU || "", // ✅ Nouvelle donnée
-    zpcustucoe: selectedOFData?.ZPCUSTUCOE ? String(selectedOFData.ZPCUSTUCOE) : "", // ✅ Nouvelle donnée
-    zshl: selectedOFData?.ZSHL ? String(selectedOFData.ZSHL) : "", // ✅ Nouvelle donnée
-  });
+  const imprimerPalette = async () => {
+    if (!paletteGeneree) {
+      Alert.alert(
+        "Erreur",
+        "Aucune palette n'a été générée pour l'impression.",
+      );
 
-  const succes = await sendToPrinter(zpl);
+      return;
+    }
 
-  if (succes) {
-    Alert.alert("Succès", "Étiquette envoyée à l'imprimante ✅");
-  } else {
-    Alert.alert(
-      "Échec d'impression",
-      "Impossible de joindre l'imprimante.\nVérifie l'adresse IP dans les paramètres."
-    );
-  }
-};
+    const qteText =
+      selectedOFData?.quantite !== undefined
+        ? String(selectedOFData.quantite)
+        : "0";
+
+    const uniteText = selectedOFData?.unite
+      ? String(selectedOFData.unite)
+      : "CAR";
+
+const zpl = generateZplLabel({
+  palette: paletteGeneree,
+  of: selectedOF,
+  numof: selectedOFData?.NUMOF || selectedOF,
+  designation: selectedOFData?.ZITMDES || selectedOF,
+  matricule: matricule,
+  quantiteLancee: String(selectedOFData?.ZSHL || "0"),
+  lignes: dernierePaletteLignes.map((l) => ({
+    slot: l.slot   ?? "",
+    qty:  l.qty ?? "0",   
+    LOT:  l.LOT    ?? "",
+    
+  })),
+
+});
+
+    const succes = await sendToPrinter(zpl);
+
+    if (succes) {
+      console.log("Succès", "Étiquette envoyée à l'imprimante ✅");
+    } else {
+      console.log(
+        "Échec d'impression",
+
+        "Impossible de joindre l'imprimante.\nVérifie l'adresse IP dans les paramètres.",
+      );
+    }
+  };
 
   const today = new Date().toLocaleDateString("fr-FR", {
     weekday: "long",
+
     day: "numeric",
+
     month: "long",
   });
 
   return (
     <SafeAreaView style={s.root}>
       <Stack.Screen options={{ headerShown: false }} />
+
       <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
 
       {/* ── Top bar ── */}
+
       <View style={s.topbar}>
         <TouchableOpacity style={s.hamburger} onPress={openSidebar}>
           <Text style={s.hamburgerIcon}>☰</Text>
         </TouchableOpacity>
+
         <View style={s.centerTitleContainer}>
           <Text style={s.topbarTitle}>
-            {activeTab === "declaration" ? "DÉCLARATION PRODUCTION" : "HISTORIQUE DES PALETTES"}
+            {activeTab === "declaration"
+              ? "DÉCLARATION PRODUCTION"
+              : "HISTORIQUE DES PALETTES"}
           </Text>
+
           <Text style={s.topbarSubTitle}>Dr. Oetker · Vanoise App</Text>
         </View>
+
         <View style={s.logoWrap}>
-          <Image source={require("../../assets/favicon.png")} style={s.logo} resizeMode="contain" />
+          <Image
+            source={require("../../assets/favicon.png")}
+            style={s.logo}
+            resizeMode="contain"
+          />
         </View>
       </View>
+
       <View style={s.redRule} />
 
       <ScrollView
@@ -345,11 +543,13 @@ const imprimerPalette = async () => {
               style={[s.loadLogo, { transform: [{ scale: pulseAnim }] }]}
               resizeMode="contain"
             />
+
             <Text style={s.loadTxt}>Connexion au système...</Text>
           </View>
         ) : (
           <>
             {/* ════ DÉCLARATION ════ */}
+
             {activeTab === "declaration" && (
               <View>
                 <View style={s.dateChip}>
@@ -357,17 +557,25 @@ const imprimerPalette = async () => {
                 </View>
 
                 <Divider label="ORDRE DE FABRICATION" />
+
                 <View style={s.pickerCard}>
-                  <Text style={s.inputLabel}>Rechercher et Sélectionner l'OF</Text>
+                  <Text style={s.inputLabel}>
+                    Rechercher et Sélectionner l'OF
+                  </Text>
+
                   <TextInput
                     style={s.input}
                     placeholder="Tapez pour filtrer (Ex: C...)"
-                    value={selectedOF ? searchText : searchText}
+                    value={searchText}
                     onChangeText={(txt) => {
                       setSearchText(txt);
+
                       setSelectedOF("");
-                      setSelectedOFData(null); // ← reset
-                      setPaletteGeneree(null); // ← AJOUT : Efface l'ancienne palette imprimée dès qu'on change d'OF
+
+                      setSelectedOFData(null);
+
+                      setPaletteGeneree(null);
+
                       setShowDropdown(true);
                     }}
                     onFocus={() => setShowDropdown(true)}
@@ -375,93 +583,153 @@ const imprimerPalette = async () => {
 
                   {showDropdown && ordresFabrication.length > 0 && (
                     <View style={s.dropdownContainer}>
-                      <ScrollView nestedScrollEnabled={true} style={{ maxHeight: 150 }}>
+                      <ScrollView
+                        nestedScrollEnabled={true}
+                        style={{ maxHeight: 150 }}
+                      >
                         {ordresFabrication.map((of, idx) => (
                           <TouchableOpacity
                             key={idx}
                             style={s.dropdownItem}
                             onPress={() => {
                               setSelectedOF(of.ZITMREF);
-                              setSelectedOFData(of); // ← AJOUT : stocke l'objet complet
+
+                              setSelectedOFData(of);
+
                               setSearchText(`${of.ZITMREF} - ${of.ZITMDES}`);
+
                               setShowDropdown(false);
                             }}
                           >
                             <Text style={s.dropdownItemTxt}>
                               {of.ZITMREF} —{" "}
-                              <Text style={{ color: C.inkLight }}>{of.ZITMDES}</Text>
+                              <Text style={{ color: C.inkLight }}>
+                                {of.ZITMDES}
+                              </Text>
                             </Text>
                           </TouchableOpacity>
                         ))}
                       </ScrollView>
                     </View>
                   )}
+
+                  {selectedOFData && (
+                    <View style={s.infoArticleBadge}>
+                      <Text style={s.infoArticleTxt}>
+                        <Text style={{ fontWeight: "700" }}>
+                          Quantité Lancée :
+                        </Text>{" "}
+                        {selectedOFData.quantite}{" "}
+                        {selectedOFData.unite || "CAR"}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
+                {/* 🌟 NOUVEAU BLOC : Saisie unique du Numéro de Lot global au dessus */}
+
+                <Divider label="IDENTIFICATION DU LOT GLOBAL" />
+
+                <View style={s.pickerCard}>
+                  <Text style={s.inputLabel}>Numéro de Lot Général</Text>
+
+                  <TextInput
+                    style={s.input}
+                    placeholder="Ex: L2606"
+                    value={lotGlobal}
+                    onChangeText={(txt) => {
+                      setLotGlobal(txt);
+
+                      setPaletteGeneree(null);
+                    }}
+                  />
                 </View>
 
                 <View style={s.tableHeaderRow}>
                   <Text style={s.sectionTitle}>Composition Palette</Text>
+
                   <TouchableOpacity style={s.addButton} onPress={ajouterLigne}>
-                    <Text style={s.addButtonText}>+ Ajouter un lot</Text>
+                    <Text style={s.addButtonText}>+ Ajouter un sous-lot</Text>
                   </TouchableOpacity>
                 </View>
 
                 {lignesProduction.length === 0 ? (
                   <Text style={s.emptyText}>
-                    Aucun lot saisi. Cliquez sur + Ajouter pour configurer la palette.
+                    Aucun emplacement saisi. Cliquez sur + Ajouter un sous-lot.
                   </Text>
                 ) : (
                   lignesProduction.map((ligne, index) => (
                     <View key={ligne.id} style={s.ligneCard}>
                       <Text style={s.ligneIndex}>Sous-lot #{index + 1}</Text>
+
                       <View style={s.formGrid}>
-                        <View style={s.inputBox}>
-                          <Text style={s.fieldLabel}>LOT</Text>
+                        {/* Suppression complète du champ LOT de la ligne pour éviter les doublons */}
+
+                        <View style={[s.inputBox, { flex: 2 }]}>
+                          <Text style={s.fieldLabel}>SLOT / EMPLACEMENT</Text>
+
                           <TextInput
                             style={s.input}
-                            placeholder="L2606"
-                            value={ligne.lot}
-                            onChangeText={(txt) => updateLigne(ligne.id, "lot", txt)}
-                          />
-                        </View>
-                        <View style={s.inputBox}>
-                          <Text style={s.fieldLabel}>SLOT</Text>
-                          <TextInput
-                            style={s.input}
-                            placeholder="A-12"
+                            placeholder="Ex: A-12, B-04..."
                             value={ligne.slot}
-                            onChangeText={(txt) => updateLigne(ligne.id, "slot", txt)}
+                            onChangeText={(txt) =>
+                              updateLigne(ligne.id, "slot", txt)
+                            }
                           />
                         </View>
-                        <View style={s.inputBox}>
-                          <Text style={s.fieldLabel}>QTY</Text>
+
+                        <View style={[s.inputBox, { flex: 1 }]}>
+                          <Text style={s.fieldLabel}>QUANTITÉ</Text>
+
                           <TextInput
                             style={s.input}
                             placeholder="Unités"
                             keyboardType="numeric"
                             value={ligne.quantite}
-                            onChangeText={(txt) => updateLigne(ligne.id, "quantite", txt)}
+                            onChangeText={(txt) =>
+                              updateLigne(ligne.id, "quantite", txt)
+                            }
                           />
                         </View>
                       </View>
-                      <TouchableOpacity style={s.deleteBtn} onPress={() => supprimerLigne(ligne.id)}>
-                        <Text style={s.deleteBtnTxt}>Supprimer la ligne</Text>
+
+                      <TouchableOpacity
+                        style={s.deleteBtn}
+                        onPress={() => supprimerLigne(ligne.id)}
+                      >
+                        <Text style={s.deleteBtnTxt}>
+                          Supprimer l'emplacement
+                        </Text>
                       </TouchableOpacity>
                     </View>
                   ))
                 )}
 
                 <View style={{ marginTop: 20 }}>
-                  <TouchableOpacity style={s.validerBtn} onPress={validerDeclaration}>
+                  <TouchableOpacity
+                    style={s.validerBtn}
+                    onPress={validerDeclaration}
+                  >
                     <Text style={s.validerBtnTxt}>Enregistrer la Palette</Text>
                   </TouchableOpacity>
                 </View>
 
                 {paletteGeneree && (
                   <View style={s.paletteCard}>
-                    <Text style={s.paletteLabel}>📦 NUMÉRO DE PALETTE UNIQUE GÉNÉRÉ :</Text>
+                    <Text style={s.paletteLabel}>
+                      📦 NUMÉRO DE PALETTE UNIQUE GÉNÉRÉ :
+                    </Text>
+
                     <Text style={s.paletteCode}>{paletteGeneree}</Text>
-                    <Text style={s.paletteSub}>Lié à l'OF : {selectedOF}</Text>
-                    <TouchableOpacity style={s.printBtn} onPress={imprimerPalette}>
+
+                    <Text style={s.paletteSub}>
+                      Lié à l'OF : {selectedOF} · Lot : {lotGlobal}
+                    </Text>
+
+                    <TouchableOpacity
+                      style={s.printBtn}
+                      onPress={imprimerPalette}
+                    >
                       <Text style={s.printBtnTxt}>🖨️ Imprimer l'étiquette</Text>
                     </TouchableOpacity>
                   </View>
@@ -470,14 +738,23 @@ const imprimerPalette = async () => {
             )}
 
             {/* ════ HISTORIQUE ════ */}
+
             {activeTab === "historique" && (
               <View style={{ paddingBottom: 30 }}>
-                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 15 }}>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: 15,
+                  }}
+                >
                   <Text style={s.sectionTitle}>Palettes Enregistrées</Text>
                 </View>
 
                 <View style={s.searchBarContainer}>
                   <Text style={s.searchBarIcon}>🔍</Text>
+
                   <TextInput
                     style={s.searchBarInput}
                     placeholder="Numéro palette, article..."
@@ -485,8 +762,12 @@ const imprimerPalette = async () => {
                     value={searchTerm}
                     onChangeText={(txt) => setSearchTerm(txt)}
                   />
+
                   {searchTerm.length > 0 && (
-                    <TouchableOpacity onPress={() => setSearchTerm("")} style={s.clearSearchContainer}>
+                    <TouchableOpacity
+                      onPress={() => setSearchTerm("")}
+                      style={s.clearSearchContainer}
+                    >
                       <Text style={s.clearSearchText}>✕</Text>
                     </TouchableOpacity>
                   )}
@@ -497,66 +778,190 @@ const imprimerPalette = async () => {
                     <ActivityIndicator size="small" color={C.red} />
                   </View>
                 ) : historiquePalettes.length === 0 ? (
-                  <Text style={s.emptyText}>Aucune palette trouvée dans l'historique.</Text>
+                  <Text style={s.emptyText}>
+                    Aucune palette trouvée dans l'historique.
+                  </Text>
                 ) : (
                   <>
-           {historiquePalettes.map((pal, idx) => (
-  <View key={idx} style={s.histCard}>
-    {/* En-tête de la palette unique */}
-    <View style={s.histCardHeader}>
-      <Text style={s.histPalNum}>{pal.palette || "N/A"}</Text>
-      <Text style={s.histDate}>
-        {pal.date_production
-          ? new Date(pal.date_production).toLocaleDateString("fr-FR", {
-              day: "2-digit", month: "2-digit", year: "numeric",
-              hour: "2-digit", minute: "2-digit",
-            })
-          : ""}
-      </Text>
-    </View>
+                    {historiquePalettes.map((pal, idx) => (
+                      <View key={idx} style={s.histCard}>
+                        <View style={s.histCardHeader}>
+                          <Text style={s.histPalNum}>
+                            {pal.palette || "N/A"}
+                          </Text>
 
-    <View style={{ marginTop: 8 }}>
-      <Text style={[s.histInfo, { marginBottom: 6 }]}>
-        📦 Article : <Text style={{ fontWeight: "700" }}>{pal.article || "Inconnu"}</Text>
-      </Text>
-      
-      
-      <Text style={[s.histInfo, { fontWeight: "700", color: C.inkMid, fontSize: 13, marginBottom: 4 }]}>
-        📋 Composition de la palette :
-      </Text>
+                          <Text style={s.histDate}>
+                            {pal.date_production
+                              ? new Date(
+                                  pal.date_production,
+                                ).toLocaleDateString("fr-FR", {
+                                  day: "2-digit",
+                                  month: "2-digit",
+                                  year: "numeric",
 
-      {/* Boucle interne pour afficher tous les slots/lots de cette même palette */}
-      {pal.slots && pal.slots.length > 0 ? (
-        pal.slots.map((subLot: any, subIdx: number) => (
-          <View 
-            key={subIdx} 
-            style={{ 
-              backgroundColor: C.surface, 
-              padding: 8, 
-              borderRadius: 6, 
-              marginTop: 4,
-              borderLeftWidth: 3,
-              borderLeftColor: C.red
-            }}
-          >
-            <Text style={{ fontSize: 12, color: C.inkLight, fontWeight: "600" }}>
-              Sous-lot #{subIdx + 1}
-            </Text>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 2 }}>
-              <Text style={s.histInfo}>
-                🏷️ Lot : <Text style={{ fontWeight: "700", color: C.red }}>{subLot.lot}</Text>
-              </Text>
-              <Text style={s.histInfo}>📍 Slot : <Text style={{ fontWeight: "600" }}>{subLot.slot}</Text></Text>
-              <Text style={s.histInfo}>⚖️ Qty : <Text style={{ fontWeight: "600" }}>{subLot.qty}</Text></Text>
-            </View>
-          </View>
-        ))
-      ) : (
-        <Text style={s.histInfo}>Aucun lot associé</Text>
-      )}
-    </View>
-  </View>
-))}
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })
+                              : ""}
+                          </Text>
+                        </View>
+
+                        <View style={{ marginTop: 8 }}>
+                          <Text style={[s.histInfo, { marginBottom: 6 }]}>
+                            📦 Article :{" "}
+                            <Text style={{ fontWeight: "700" }}>
+                              {pal.article || "Inconnu"}
+                            </Text>
+                          </Text>
+
+                          <Text
+                            style={[
+                              s.histInfo,
+                              {
+                                fontWeight: "700",
+                                color: C.inkMid,
+                                fontSize: 13,
+                                marginBottom: 4,
+                              },
+                            ]}
+                          >
+                            📋 Composition de la palette :
+                          </Text>
+
+                          {pal.slots && pal.slots.length > 0 ? (
+                            (() => {
+                              const slotsByLot: Record<string, any[]> =
+                                pal.slots.reduce(
+                                  (acc: Record<string, any[]>, s: any) => {
+                                    const lotName = s.lot || "Sans lot";
+                                    if (!acc[lotName]) acc[lotName] = [];
+                                    acc[lotName].push(s);
+                                    return acc;
+                                  },
+                                  {},
+                                );
+
+                              return Object.entries(slotsByLot).map(
+                                ([lotName, slotsArr], lotIdx) => (
+                                  <View key={lotIdx} style={{ marginTop: 6 }}>
+                                    <Text
+                                      style={{
+                                        fontSize: 13,
+                                        fontWeight: "700",
+                                        color: C.red,
+                                      }}
+                                    >
+                                      🏷️ Lot : {lotName}
+                                    </Text>
+
+                                    {(() => {
+                                      // Expand entries where a single record may contain multiple slots like "A,B"
+                                      const expanded: any[] = slotsArr.flatMap(
+                                        (s: any) => {
+                                          const rawSlot = s.slot ?? "";
+                                          const slotNames =
+                                            typeof rawSlot === "string"
+                                              ? rawSlot
+                                                  .split(/[;,\/]/)
+                                                  .map((x) => x.trim())
+                                                  .filter(Boolean)
+                                              : [rawSlot];
+
+                                          const rawQty = s.qty ?? s.QTY ?? 0;
+                                          const qtyIsString =
+                                            typeof rawQty === "string" &&
+                                            /[;,\/]/.test(rawQty);
+                                          const qtyParts = qtyIsString
+                                            ? (rawQty as string)
+                                                .split(/[;,\/]/)
+                                                .map((x) => x.trim())
+                                            : null;
+
+                                          if (slotNames.length > 1) {
+                                            if (
+                                              qtyParts &&
+                                              qtyParts.length ===
+                                                slotNames.length
+                                            ) {
+                                              return slotNames.map(
+                                                (name, idx) => ({
+                                                  slot: name,
+                                                  qty: qtyParts[idx],
+                                                }),
+                                              );
+                                            }
+
+                                            const qtyNum = Number(rawQty);
+                                            if (
+                                              !isNaN(qtyNum) &&
+                                              qtyNum % slotNames.length === 0
+                                            ) {
+                                              const per =
+                                                qtyNum / slotNames.length;
+                                              return slotNames.map((name) => ({
+                                                slot: name,
+                                                qty: per,
+                                              }));
+                                            }
+
+                                            // Fallback: show each slot with the original qty (best-effort)
+                                            return slotNames.map((name) => ({
+                                              slot: name,
+                                              qty: rawQty,
+                                            }));
+                                          }
+
+                                          return [
+                                            { slot: slotNames[0], qty: rawQty },
+                                          ];
+                                        },
+                                      );
+
+                                      return expanded.map(
+                                        (es: any, esi: number) => (
+                                          <View
+                                            key={esi}
+                                            style={{
+                                              flexDirection: "row",
+                                              justifyContent: "space-between",
+                                              alignItems: "center",
+                                              backgroundColor: C.surface,
+                                              paddingVertical: 6,
+                                              paddingHorizontal: 10,
+                                              borderRadius: 4,
+                                              marginTop: 4,
+                                            }}
+                                          >
+                                            <Text
+                                              style={{
+                                                fontSize: 13,
+                                                fontWeight: "600",
+                                              }}
+                                            >
+                                              📍 Slot : {es.slot}
+                                            </Text>
+                                            <Text
+                                              style={{
+                                                fontSize: 13,
+                                                fontWeight: "700",
+                                              }}
+                                            >
+                                              ⚖️ {es.qty}
+                                            </Text>
+                                          </View>
+                                        ),
+                                      );
+                                    })()}
+                                  </View>
+                                ),
+                              );
+                            })()
+                          ) : (
+                            <Text style={s.histInfo}>Aucun lot associé</Text>
+                          )}
+                        </View>
+                      </View>
+                    ))}
 
                     <View style={s.paginationWrapper}>
                       <TouchableOpacity
@@ -564,17 +969,30 @@ const imprimerPalette = async () => {
                         onPress={handlePrevPage}
                         disabled={page === 1 || loadingHist}
                       >
-                        <Text style={[s.pagBtnTxt, page === 1 && s.pagBtnTxtDisabled]}>◀ Précédent</Text>
+                        <Text
+                          style={[
+                            s.pagBtnTxt,
+                            page === 1 && s.pagBtnTxtDisabled,
+                          ]}
+                        >
+                          ◀ Précédent
+                        </Text>
                       </TouchableOpacity>
+
                       <View style={s.pageBadge}>
                         <Text style={s.pageBadgeTxt}>Page {page}</Text>
                       </View>
+
                       <TouchableOpacity
                         style={[s.pagBtn, !hasMore && s.pagBtnDisabled]}
                         onPress={handleNextPage}
                         disabled={!hasMore || loadingHist}
                       >
-                        <Text style={[s.pagBtnTxt, !hasMore && s.pagBtnTxtDisabled]}>Suivant ▶</Text>
+                        <Text
+                          style={[s.pagBtnTxt, !hasMore && s.pagBtnTxtDisabled]}
+                        >
+                          Suivant ▶
+                        </Text>
                       </TouchableOpacity>
                     </View>
                   </>
@@ -583,14 +1001,19 @@ const imprimerPalette = async () => {
             )}
 
             {/* ── Footer ── */}
+
             <View style={s.footer}>
               <View style={s.footerDivider} />
+
               <Text style={s.copyright}>
                 © 2026{" "}
-                <Text style={s.copyrightLink} onPress={() => Linking.openURL("https://vanoiserie.tn/")}>
+                <Text
+                  style={s.copyrightLink}
+                  onPress={() => Linking.openURL("https://vanoiserie.tn/")}
+                >
                   Dr. Oetker Vanoise
-                </Text>
-                {" "}Tous droits réservés.
+                </Text>{" "}
+                Tous droits réservés.
               </Text>
             </View>
           </>
@@ -598,52 +1021,93 @@ const imprimerPalette = async () => {
       </ScrollView>
 
       {/* ── Sidebar overlay ── */}
+
       {sidebarOpen && (
         <Animated.View style={[s.overlay, { opacity: overlayAnim }]}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={closeSidebar} />
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            onPress={closeSidebar}
+          />
         </Animated.View>
       )}
 
       {/* ── Sidebar ── */}
-      <Animated.View style={[s.sidebar, { transform: [{ translateX: slideAnim }] }]}>
+
+      <Animated.View
+        style={[s.sidebar, { transform: [{ translateX: slideAnim }] }]}
+      >
         <View style={sb.stripe} />
+
         <View style={sb.logoBlock}>
-          <Image source={require("../../assets/favicon.png")} style={sb.logoImg} resizeMode="contain" />
+          <Image
+            source={require("../../assets/favicon.png")}
+            style={sb.logoImg}
+            resizeMode="contain"
+          />
+
           <Text style={sb.brand}>DR. OETKER</Text>
+
           <Text style={sb.brandSub}>VANOISE PORTAL</Text>
         </View>
+
         <View style={sb.header}>
           <View style={sb.avatarLg}>
-            <Text style={sb.avatarLgTxt}>{nom ? nom[0].toUpperCase() : "O"}</Text>
+            <Text style={sb.avatarLgTxt}>
+              {nom ? nom[0].toUpperCase() : "O"}
+            </Text>
           </View>
+
           <View>
             <Text style={sb.name}>{nom || "Opérateur"}</Text>
+
             <Text style={sb.role}>Département IT · Production</Text>
           </View>
         </View>
+
         <View style={sb.sep} />
 
         <View style={sb.section}>
           <Text style={sb.sectionLabel}>NAVIGATION</Text>
+
           <TouchableOpacity
             style={[sb.item, activeTab === "declaration" && sb.itemActive]}
-            onPress={() => { setActiveTab("declaration"); closeSidebar(); }}
+            onPress={() => {
+              setActiveTab("declaration");
+              closeSidebar();
+            }}
           >
             <Text style={sb.itemIcon}>📦</Text>
-            <Text style={[sb.itemLabel, activeTab === "declaration" && sb.itemLabelActive]}>
+
+            <Text
+              style={[
+                sb.itemLabel,
+                activeTab === "declaration" && sb.itemLabelActive,
+              ]}
+            >
               Déclaration Prod.
             </Text>
+
             {activeTab === "declaration" && <View style={sb.pip} />}
           </TouchableOpacity>
 
           <TouchableOpacity
             style={[sb.item, activeTab === "historique" && sb.itemActive]}
-            onPress={() => { setActiveTab("historique"); closeSidebar(); }}
+            onPress={() => {
+              setActiveTab("historique");
+              closeSidebar();
+            }}
           >
             <Text style={sb.itemIcon}>📜</Text>
-            <Text style={[sb.itemLabel, activeTab === "historique" && sb.itemLabelActive]}>
+
+            <Text
+              style={[
+                sb.itemLabel,
+                activeTab === "historique" && sb.itemLabelActive,
+              ]}
+            >
               Historique
             </Text>
+
             {activeTab === "historique" && <View style={sb.pip} />}
           </TouchableOpacity>
         </View>
@@ -652,13 +1116,13 @@ const imprimerPalette = async () => {
           <TouchableOpacity style={sb.logoutBtn} onPress={handleLogout}>
             <Text style={sb.logoutTxt}>Se déconnecter</Text>
           </TouchableOpacity>
+
           <Text style={sb.version}>Dr. Oetker Vanoise · v1.0</Text>
         </View>
       </Animated.View>
     </SafeAreaView>
   );
 }
-
 
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: C.bg },
@@ -798,6 +1262,19 @@ const s = StyleSheet.create({
     fontWeight: "800",
     color: C.inkLight,
     marginBottom: 8,
+  },
+  infoArticleBadge: {
+    backgroundColor: "#F5E6C8", // Couleur crème assortie à votre charte
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: "#C0202A", // Rouge Dr. Oetker Vanoise
+  },
+  infoArticleTxt: {
+    fontSize: 14,
+    color: "#1F1610",
+    marginBottom: 4,
   },
   formGrid: { flexDirection: "row", gap: 8 },
   inputBox: { flex: 1 },
