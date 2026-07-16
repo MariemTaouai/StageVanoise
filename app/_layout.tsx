@@ -1,18 +1,13 @@
+// app/_layout.tsx
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
-
 import { useEffect } from 'react';
 import * as SplashScreen from 'expo-splash-screen';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 SplashScreen.preventAutoHideAsync();
-
-export const unstable_settings = {
-  // On remet (tabs) ou (auth) comme point d'ancrage initial selon ton flux
-  anchor: '(tabs)',
-};
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
@@ -22,22 +17,32 @@ export default function RootLayout() {
       await new Promise(resolve => setTimeout(resolve, 1500));
       await SplashScreen.hideAsync();
     };
-
     prepare();
   }, []);
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack screenOptions={{ headerShown: false }}>
-        {/* Uniquement les vrais dossiers/fichiers racines détectés par Expo */}
-        <Stack.Screen name="splash" />
-        <Stack.Screen name="(auth)" />
-        <Stack.Screen name="(tabs)" />
-  <Stack.Screen name="(user)" options={{ gestureEnabled: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
-        
+      <Stack 
+        screenOptions={{ 
+          headerShown: false,
+          gestureEnabled: false,
+        }}
+      >
+        <Stack.Screen name="splash" options={{ gestureEnabled: false }} />
+        <Stack.Screen name="(auth)" options={{ gestureEnabled: false }} />
+        <Stack.Screen name="(tabs)" options={{ gestureEnabled: false }} />
+        <Stack.Screen name="(user)" options={{ gestureEnabled: false }} />
+        <Stack.Screen name="modal" options={{ presentation: 'modal', gestureEnabled: false }} />
+        {/* ✅ AJOUTER CET ÉCRAN */}
+        <Stack.Screen 
+          name="ApiConfigScreen" 
+          options={{ 
+            headerShown: true,
+            title: "Configuration",
+            gestureEnabled: false,
+          }} 
+        />
       </Stack>
-
       <StatusBar style="auto" />
     </ThemeProvider>
   );

@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, SafeAreaView, KeyboardAvoidingView,
   Platform, ScrollView, Alert, ActivityIndicator
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface BackendResponse {
   message?: string;
@@ -14,12 +15,39 @@ interface BackendResponse {
 export default function VerifyOtpScreen() {
   const [code, setCode] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
+  const [apiUrl, setApiUrl] = useState<string>('');
   const router = useRouter();
   const params = useLocalSearchParams<{ email?: string }>();
   const email = typeof params.email === 'string' ? params.email : '';
 
-const API_URL = 'http://10.197.21.178:3000';
+  // ✅ Récupérer l'URL sauvegardée au chargement
+  useEffect(() => {
+    const loadApiUrl = async () => {
+      try {
+        const url = await AsyncStorage.getItem('api_url');
+        if (url) {
+          setApiUrl(url);
+          console.log('✅ URL chargée:', url);
+        } else {
+          console.warn('⚠️ Aucune URL trouvée, redirection vers configuration');
+          router.replace('/ApiConfigScreen');
+        }
+      } catch (error) {
+        console.error('❌ Erreur chargement URL:', error);
+        router.replace('/ApiConfigScreen');
+      }
+    };
+    loadApiUrl();
+  }, []);
+
   const handleVerifyOtp = async (): Promise<void> => {
+    // ✅ Vérifier que l'URL est chargée
+    if (!apiUrl) {
+      Alert.alert('Erreur', 'URL du serveur non configurée');
+      router.replace('/ApiConfigScreen');
+      return;
+    }
+
     const cleanCode = code.trim();
 
     if (!cleanCode) {
@@ -35,7 +63,9 @@ const API_URL = 'http://10.197.21.178:3000';
     try {
       setLoading(true);
 
-      const response = await fetch(`${API_URL}/verify-otp`, {
+      console.log('📡 Vérification du code vers:', `${apiUrl}/verify-otp`);
+
+      const response = await fetch(`${apiUrl}/verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, code: cleanCode }),
@@ -81,6 +111,13 @@ const API_URL = 'http://10.197.21.178:3000';
   };
 
   const handleResend = async (): Promise<void> => {
+    // ✅ Vérifier que l'URL est chargée
+    if (!apiUrl) {
+      Alert.alert('Erreur', 'URL du serveur non configurée');
+      router.replace('/ApiConfigScreen');
+      return;
+    }
+
     if (!email) {
       Alert.alert('Erreur', "Adresse e-mail manquante ❌");
       return;
@@ -89,7 +126,9 @@ const API_URL = 'http://10.197.21.178:3000';
     try {
       setLoading(true);
 
-      const response = await fetch(`${API_URL}/forgot-password`, {
+      console.log('📡 Renvoi du code vers:', `${apiUrl}/forgot-password`);
+
+      const response = await fetch(`${apiUrl}/forgot-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),

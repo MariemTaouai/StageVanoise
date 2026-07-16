@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+// app/(auth)/login.tsx
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, SafeAreaView, KeyboardAvoidingView,
@@ -6,91 +7,180 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-const API_URL = 'http://172.16.11.176:3000';  
-const handleLogin = async () => {
-  const cleanEmail = email.trim();
-  const cleanPassword = password.trim();
+  const [apiUrl, setApiUrl] = useState('');
 
-  // 1. Validation front simple
-  if (!cleanEmail || !cleanPassword) {
-    Alert.alert('Erreur', 'Email et mot de passe obligatoires');
-    return;
-  }
+  // ✅ Récupérer l'URL sauvegardée au chargement
+  useEffect(() => {
+    const loadApiUrl = async () => {
+      try {
+        const url = await AsyncStorage.getItem('api_url');
+        if (url) {
+          setApiUrl(url);
+          console.log('✅ URL chargée:', url);
+        } else {
+          console.warn('⚠️ Aucune URL trouvée, redirection vers configuration');
+          router.replace('/ApiConfigScreen');
+        }
+      } catch (error) {
+        console.error('❌ Erreur chargement URL:', error);
+        router.replace('/ApiConfigScreen');
+      }
+    };
+    loadApiUrl();
+  }, []);
 
-  // 2. Validation email format
-  const emailRegex = /\S+@\S+\.\S+/;
-  if (!emailRegex.test(cleanEmail)) {
-    Alert.alert('Erreur', 'Email invalide ❌');
-    return;
-  }
+  // ✅ Fonction pour rediriger selon les rôles
+  const redirectBasedOnRoles = (user: any) => {
+    const roles = user.roles || [];
+    
+    console.log('🔑 Rôles de l\'utilisateur:', roles);
+    
+    if (roles.includes('Production Controller')) {
+      router.replace('/(user)/DeclarationProduction');
+      return;
+    }
+    
+    if (roles.includes('GA sales Controller') || roles.includes('Commercial')) {
+      router.replace('/(user)/SalesDashboard');
+      return;
+    }
+    
+    if (roles.includes('Expéditeur')) {
+      router.replace('/(user)/ExpeditionScreen');
+      return;
+    }
+    
+    if (roles.includes('Réception')) {
+      router.replace('/(user)/ReceptionScreen');
+      return;
+    }
+    
+    if (roles.length > 1) {
+      router.replace('/(auth)/RoleSelectionScreen');
+      return;
+    }
+    
+    console.warn('⚠️ Aucun rôle reconnu, redirection vers dashboard');
+    router.replace('/(user)');
+  };
 
-  // 3. Mot de passe min length
-  if (cleanPassword.length < 3) {
-    Alert.alert('Erreur', 'Mot de passe doit contenir au moins 3 caractères');
-    return;
-  }
-
-  try {
-    setLoading(true);
-
-    const response = await fetch(`${API_URL}/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: cleanEmail,
-        password: cleanPassword,
-      }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      Alert.alert('Erreur', data.message || 'Login échoué ❌');
+  const handleLogin = async () => {
+    if (!apiUrl) {
+      Alert.alert('Erreur', 'URL du serveur non configurée');
+      router.replace('/ApiConfigScreen');
       return;
     }
 
-    // Sauvegarde de l'utilisateur dans le stockage local
-    await AsyncStorage.setItem('user', JSON.stringify(data.user));
+    const cleanEmail = email.trim();
+    const cleanPassword = password.trim();
 
-    Alert.alert('Succès', `Bienvenue ${data.user.nom} 👋`);
+    if (!cleanEmail || !cleanPassword) {
+      Alert.alert('Erreur', 'Email et mot de passe obligatoires');
+      return;
+    }
 
-    // ── REDIRECTION CONDITIONNELLE SELON LE RÔLE ──
-  // ── REDIRECTION CONDITIONNELLE SELON LE RÔLE ──
-  
-if (data.user.role === 'Production Controller') {
-  // Chemin absolu correct pour Expo Router
-  router.replace('/(user)/DeclarationProduction');}
-  else if (data.user.role === 'GA sales Controller') {
-  // Chemin absolu correct pour Expo Router
-  router.replace('/(user)/SalesDashboard');
-} else {
-  // Redirection par défaut (redirige vers le fichier index.tsx de (user))
-  router.replace('/(user)');
-}
+    const emailRegex = /\S+@\S+\.\S+/;
+    if (!emailRegex.test(cleanEmail)) {
+      Alert.alert('Erreur', 'Email invalide ❌');
+      return;
+    }
 
-  } catch (error) {
-    Alert.alert('Erreur', 'Serveur inaccessible ❌');
-  } finally {
-    setLoading(false);
-  }
-};
+    if (cleanPassword.length < 3) {
+      Alert.alert('Erreur', 'Mot de passe doit contenir au moins 3 caractères');
+      return;
+    }
 
+    try {
+      setLoading(true);
+
+      console.log('📡 Connexion à:', `${apiUrl}/login`);
+
+      const response = await fetch(`${apiUrl}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: cleanEmail,
+          password: cleanPassword,
+        }),
+      });
+
+      const data = await response.json();
+      console.log(' Réponse login:', JSON.stringify(data, null, 2));
+
+      if (!response.ok) {
+        Alert.alert('Erreur', data.message || 'Login échoué ❌');
+        return;
+      }
+
+      // ✅ Vérifier les rôles
+      if (!data.user.roles || data.user.roles.length === 0) {
+        console.warn('⚠️ Aucun rôle trouvé, rôle par défaut: User');
+        data.user.roles = ['User'];
+      }
+
+      // ✅ =============================================
+      // ✅ STOCKER LE TOKEN D'ACCÈS (accessToken)
+      // ✅ =============================================
+      if (data.accessToken) {
+        await AsyncStorage.setItem('access_token', data.accessToken);
+        console.log('✅ Access token stocké:', data.accessToken.substring(0, 30) + '...');
+      } else {
+        console.warn('⚠️ PAS DE accessToken dans la réponse !');
+        Alert.alert('Erreur', 'Le serveur n\'a pas retourné de token');
+        setLoading(false);
+        return;
+      }
+
+      // ✅ STOCKER LE REFRESH TOKEN
+      if (data.refreshToken) {
+        await AsyncStorage.setItem('refresh_token', data.refreshToken);
+        console.log('✅ Refresh token stocké');
+      } else {
+        console.warn('⚠️ PAS DE refreshToken dans la réponse !');
+      }
+
+      await AsyncStorage.setItem('user', JSON.stringify(data.user));
+
+      await AsyncStorage.setItem('user_roles', JSON.stringify(data.user.roles));
+
+      // ✅ VÉRIFICATION : Lire les tokens stockés
+      const savedAccessToken = await AsyncStorage.getItem('access_token');
+      const savedRefreshToken = await AsyncStorage.getItem('refresh_token');
+      const savedUser = await AsyncStorage.getItem('user');
+      const savedRoles = await AsyncStorage.getItem('user_roles');
+      
+      console.log('🔍 VÉRIFICATION FINALE:');
+      console.log('  - Access Token:', savedAccessToken ? '✅ PRÉSENT (' + savedAccessToken.substring(0, 30) + '...)' : '❌ ABSENT');
+      console.log('  - Refresh Token:', savedRefreshToken ? '✅ PRÉSENT' : '❌ ABSENT');
+      console.log('  - User:', savedUser ? '✅ PRÉSENT' : '❌ ABSENT');
+      console.log('  - Roles:', savedRoles ? '✅ PRÉSENT' : '❌ ABSENT');
+
+      const roleStr = data.user.roles.join(', ');
+      Alert.alert(
+        'Succès', 
+        `Bienvenue ${data.user.nom} 👋\nRôles: ${roleStr}`
+      );
+
+      redirectBasedOnRoles(data.user);
+
+    } catch (error) {
+      console.error('❌ Erreur login:', error);
+      Alert.alert('Erreur', 'Serveur inaccessible ❌');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scroll} bounces={false}>
-
-        {/* ── Header ── */}
         <View style={styles.header}>
-
-
-
-          {/* Logo dans un carré blanc arrondi */}
           <View style={styles.logoWrapper}>
             <Image
               source={require('../../assets/favicon.png')}
@@ -98,20 +188,14 @@ if (data.user.role === 'Production Controller') {
               resizeMode="contain"
             />
           </View>
-
           <Text style={styles.welcomeTitle}>Bienvenue</Text>
           <Text style={styles.welcomeSub}>Connectez-vous à votre espace</Text>
-
-       
         </View>
 
-        {/* ── Vague ── */}
         <View style={styles.wave} />
 
-        {/* ── Formulaire ── */}
         <View style={styles.form}>
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-
             <Text style={styles.label}>Adresse e-mail</Text>
             <View style={styles.inputBox}>
               <Text style={styles.inputIcon}>✉️</Text>
@@ -154,23 +238,25 @@ if (data.user.role === 'Production Controller') {
               onPress={handleLogin}
               disabled={loading}
             >
-             <Text style={styles.loginButtonText}>
-              Se connecter
-             </Text>
+              <Text style={styles.loginButtonText}>
+                {loading ? 'Connexion...' : 'Se connecter'}
+              </Text>
             </TouchableOpacity>
 
-            {/* Séparateur */}
-        
-
+            <TouchableOpacity
+              style={styles.configButton}
+              onPress={() => router.push('/ApiConfigScreen')}
+            >
+              <Text style={styles.configButtonText}>⚙️ Changer l'URL du serveur</Text>
+            </TouchableOpacity>
           </KeyboardAvoidingView>
         </View>
 
-        {/* ── Footer ── */}
         <View style={styles.footer}>
           <Text style={styles.footerText}>
             Pas encore de compte ?{' '}
             <Text style={styles.footerLink} onPress={() => router.push('/(auth)/signup')}>
-              Sinscrire ›
+              S'inscrire ›
             </Text>
           </Text>
           <Text style={styles.copyright}>
@@ -184,24 +270,24 @@ if (data.user.role === 'Production Controller') {
             {' '}Tous droits réservés.
           </Text>
         </View>
-
       </ScrollView>
     </SafeAreaView>
   );
 }
 
+
 /* ── Couleurs ── */
-const BROWN   = '#5C3317';   // marron chocolat
-const RED     = '#C0202A';   // rouge Vanoise
-const CREAM   = '#F5E6C8';   // beige crème chaud
-const CREAM2  = '#FDF6EE';   // crème plus claire pour fond form
+const BROWN   = '#5C3317';
+const RED     = '#C0202A';
+const CREAM   = '#F5E6C8';
+const CREAM2  = '#FDF6EE';
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: CREAM2 },
-scroll: {
-  flexGrow: 1,
-  paddingTop: 20, // ou 30 / 40 selon ton goût
-},
+  scroll: {
+    flexGrow: 1,
+    paddingTop: 20,
+  },
   /* Header */
   header: {
     backgroundColor: CREAM,
@@ -223,9 +309,8 @@ scroll: {
   langSep: { color: '#C4A882', fontSize: 13 },
 
   logoWrapper: {
-    width: 10, height: 100,
-
-
+    width: 100,
+    height: 100,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -283,7 +368,7 @@ scroll: {
     backgroundColor: BROWN,
     borderRadius: 30, height: 52,
     alignItems: 'center', justifyContent: 'center',
-    marginBottom: 24,
+    marginBottom: 14,
     shadowColor: BROWN,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
@@ -291,6 +376,22 @@ scroll: {
     elevation: 5,
   },
   loginButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+
+  configButton: {
+    backgroundColor: CREAM2,
+    borderRadius: 30,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 24,
+    borderWidth: 1.5,
+    borderColor: '#C8B8A8',
+  },
+  configButtonText: {
+    color: '#7D6E65',
+    fontSize: 14,
+    fontWeight: '600',
+  },
 
   /* Séparateur */
   separatorRow: {

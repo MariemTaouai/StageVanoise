@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, SafeAreaView, KeyboardAvoidingView,
   Platform, ScrollView, Alert, ActivityIndicator
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface BackendResponse {
   message?: string;
@@ -16,13 +17,38 @@ export default function ResetPasswordScreen() {
   const [confirmPassword, setConfirmPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
+  const [apiUrl, setApiUrl] = useState<string>('');
   const router = useRouter();
   const params = useLocalSearchParams<{ email?: string; code?: string }>();
   const email = typeof params.email === 'string' ? params.email : '';
   const code = typeof params.code === 'string' ? params.code : '';
 
-const API_URL = 'http://10.197.21.178:3000';
+  useEffect(() => {
+    const loadApiUrl = async () => {
+      try {
+        const url = await AsyncStorage.getItem('api_url');
+        if (url) {
+          setApiUrl(url);
+          console.log('✅ URL chargée:', url);
+        } else {
+          console.warn('⚠️ Aucune URL trouvée, redirection vers configuration');
+          router.replace('/ApiConfigScreen');
+        }
+      } catch (error) {
+        console.error('❌ Erreur chargement URL:', error);
+        router.replace('/ApiConfigScreen');
+      }
+    };
+    loadApiUrl();
+  }, []);
+
   const handleResetPassword = async (): Promise<void> => {
+    if (!apiUrl) {
+      Alert.alert('Erreur', 'URL du serveur non configurée');
+      router.replace('/ApiConfigScreen');
+      return;
+    }
+
     const pass = newPassword.trim();
     const confirm = confirmPassword.trim();
 
@@ -31,20 +57,22 @@ const API_URL = 'http://10.197.21.178:3000';
       return;
     }
 
-    if (pass.length < 6) {
-      Alert.alert('Erreur', 'Le mot de passe doit contenir au moins 6 caractères ❌');
+    if (pass.length < 4) {
+      Alert.alert('Erreur', 'Le mot de passe doit contenir au moins 4 caractères ❌');
       return;
     }
 
     if (pass !== confirm) {
-      Alert.alert('Erreur', 'Les mots de passe ne correspondent pas ❌');
+      Alert.alert('Erreur', 'Les mots de passe ne correspondent pas ');
       return;
     }
 
     try {
       setLoading(true);
 
-      const response = await fetch(`${API_URL}/reset-password`, {
+      console.log('📡 Réinitialisation du mot de passe vers:', `${apiUrl}/reset-password`);
+
+      const response = await fetch(`${apiUrl}/reset-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, code, newPassword: pass }),
@@ -103,10 +131,8 @@ const API_URL = 'http://10.197.21.178:3000';
             </Text>
           </View>
 
-          {/* Formulaire */}
           <View style={styles.form}>
 
-            {/* Nouveau mot de passe */}
             <Text style={styles.label}>Nouveau mot de passe</Text>
             <View style={styles.inputBox}>
               <Text style={styles.inputIcon}>🔒</Text>

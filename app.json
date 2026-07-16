@@ -1,6 +1,6 @@
 {
   "expo": {
-     "splash": {
+    "splash": {
       "image": "./assets/favicon.png",
       "resizeMode": "contain",
       "backgroundColor": "#F5E6C8"
@@ -14,7 +14,12 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -24,7 +29,11 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "INTERNET",
+        "ACCESS_NETWORK_STATE"
+      ]
     },
     "web": {
       "output": "static",
@@ -43,7 +52,15 @@
             "backgroundColor": "#000000"
           }
         }
-      ]
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "L'application a besoin d'accéder à la caméra pour scanner les palettes."
+        }
+      ],
+      "expo-barcode-scanner",
+      "expo-mail-composer"
     ],
     "experiments": {
       "typedRoutes": true,

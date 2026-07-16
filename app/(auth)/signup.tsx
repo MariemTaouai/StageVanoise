@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -13,11 +13,10 @@ import {
   Linking,
   Alert
 } from 'react-native';
-
 import { router } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function SignupScreen() {
-
   const [nom, setNom] = useState('');
   const [email, setEmail] = useState('');
   const [telephone, setTelephone] = useState('');
@@ -25,14 +24,40 @@ export default function SignupScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [apiUrl, setApiUrl] = useState('');
 
-  // ⚠️ CHANGE IP selon emulator / téléphone
-const API_URL = 'http://10.197.21.178:3000';
-const isValidEmail = (email) => {
-  const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return regex.test(email);
-};
+  // ✅ Récupérer l'URL sauvegardée au chargement
+  useEffect(() => {
+    const loadApiUrl = async () => {
+      try {
+        const url = await AsyncStorage.getItem('api_url');
+        if (url) {
+          setApiUrl(url);
+          console.log('✅ URL chargée:', url);
+        } else {
+          console.warn('⚠️ Aucune URL trouvée, redirection vers configuration');
+          router.replace('/ApiConfigScreen');
+        }
+      } catch (error) {
+        console.error('❌ Erreur chargement URL:', error);
+        router.replace('/ApiConfigScreen');
+      }
+    };
+    loadApiUrl();
+  }, []);
+
+  const isValidEmail = (email: string) => {
+    const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return regex.test(email);
+  };
+
   const handleSignup = async () => {
+    // ✅ Vérifier que l'URL est chargée
+    if (!apiUrl) {
+      Alert.alert('Erreur', 'URL du serveur non configurée');
+      router.replace('/ApiConfigScreen');
+      return;
+    }
 
     // 1. validation
     if (!nom || !email || !telephone || !password || !confirmPassword) {
@@ -45,16 +70,18 @@ const isValidEmail = (email) => {
       return;
     }
 
+    if (!isValidEmail(email)) {
+      Alert.alert('Erreur', 'Email invalide ❌');
+      return;
+    }
 
-  if (!isValidEmail(email)) {
-    Alert.alert('Erreur', 'Email invalide ❌');
-    return;
-  }
     try {
       setLoading(true);
 
+      console.log('📡 Inscription vers:', `${apiUrl}/signup`);
+
       // 2. call backend
-      const response = await fetch(`${API_URL}/signup`, {
+      const response = await fetch(`${apiUrl}/signup`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -101,13 +128,13 @@ const isValidEmail = (email) => {
             <Text style={styles.backText}>‹ Retour</Text>
           </TouchableOpacity>
 
-    <View style={styles.logoWrapper}>
-  <Image
-    source={require('../../assets/favicon.png')}
-    style={styles.logo}
-    resizeMode="contain"
-  />
-</View>
+          <View style={styles.logoWrapper}>
+            <Image
+              source={require('../../assets/favicon.png')}
+              style={styles.logo}
+              resizeMode="contain"
+            />
+          </View>
 
           <Text style={styles.welcomeTitle}>Créer un compte</Text>
           <Text style={styles.welcomeSub}>Rejoignez votre espace</Text>
@@ -128,6 +155,7 @@ const isValidEmail = (email) => {
                 value={nom}
                 onChangeText={setNom}
                 placeholder="Nom"
+                editable={!loading}
               />
             </View>
 
@@ -142,6 +170,7 @@ const isValidEmail = (email) => {
                 placeholder="email@gmail.com"
                 keyboardType="email-address"
                 autoCapitalize="none"
+                editable={!loading}
               />
             </View>
 
@@ -155,6 +184,7 @@ const isValidEmail = (email) => {
                 onChangeText={setTelephone}
                 placeholder="+216"
                 keyboardType="phone-pad"
+                editable={!loading}
               />
             </View>
 
@@ -167,6 +197,7 @@ const isValidEmail = (email) => {
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry={!showPassword}
+                editable={!loading}
               />
               <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
                 <Text style={styles.inputIcon}>
@@ -184,6 +215,7 @@ const isValidEmail = (email) => {
                 value={confirmPassword}
                 onChangeText={setConfirmPassword}
                 secureTextEntry={!showPassword}
+                editable={!loading}
               />
             </View>
 
@@ -226,7 +258,6 @@ const isValidEmail = (email) => {
   );
 }
 
-
 /* ================= STYLE ================= */
 
 const BROWN = '#5C3317';
@@ -235,107 +266,107 @@ const CREAM = '#F5E6C8';
 const CREAM2 = '#FDF6EE';
 
 const styles = StyleSheet.create({
-container: {
-  flex: 1,
-  backgroundColor: CREAM2,
-},  scroll: { flexGrow: 1 },
+  container: {
+    flex: 1,
+    backgroundColor: CREAM2,
+  },
+  scroll: { flexGrow: 1 },
 
-header: {
-  backgroundColor: CREAM,
-  paddingTop: 24,
-  paddingBottom: 55,
-  alignItems: 'center',
-  paddingHorizontal: 24,
-},
+  header: {
+    backgroundColor: CREAM,
+    paddingTop: 24,
+    paddingBottom: 55,
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
 
   backBtn: { alignSelf: 'flex-start', marginLeft: 20 },
-backText: {
-  color: BROWN,
-  fontSize: 14,
-  fontWeight: '600',
-},
+  backText: {
+    color: BROWN,
+    fontSize: 14,
+    fontWeight: '600',
+  },
 
-welcomeTitle: {
-  fontSize: 24,
-  fontWeight: '700',
-  color: BROWN,
-  marginBottom: 4,
-},
+  welcomeTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: BROWN,
+    marginBottom: 4,
+  },
 
-welcomeSub: {
-  fontSize: 14,
-  color: '#8B6347',
-},
+  welcomeSub: {
+    fontSize: 14,
+    color: '#8B6347',
+  },
 
- wave: {
-  height: 35,
-  backgroundColor: CREAM2,
-  borderTopLeftRadius: 40,
-  borderTopRightRadius: 40,
-  marginTop: -35,
-},
+  wave: {
+    height: 35,
+    backgroundColor: CREAM2,
+    borderTopLeftRadius: 40,
+    borderTopRightRadius: 40,
+    marginTop: -35,
+  },
   logoWrapper: {
-    width: 100, height: 100,
-
+    width: 100,
+    height: 100,
     alignItems: 'center',
     justifyContent: 'center',
   },
   logo: { width: 280, height: 120 },
 
-
   form: { padding: 20 },
 
-label: {
-  fontSize: 13,
-  fontWeight: '600',
-  color: BROWN,
-  marginBottom: 7,
-  marginTop: 6,
-},
- inputBox: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  backgroundColor: '#fff',
-  borderRadius: 14,
-  borderWidth: 1.5,
-  borderColor: '#E8D5BC',
-  paddingHorizontal: 14,
-  height: 52,
-  marginBottom: 14,
-  shadowColor: BROWN,
-  shadowOffset: { width: 0, height: 2 },
-  shadowOpacity: 0.06,
-  shadowRadius: 4,
-  elevation: 2,
-},
-input: {
-  flex: 1,
-  fontSize: 15,
-  color: '#3D1F0A',
-},
+  label: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: BROWN,
+    marginBottom: 7,
+    marginTop: 6,
+  },
+  inputBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#E8D5BC',
+    paddingHorizontal: 14,
+    height: 52,
+    marginBottom: 14,
+    shadowColor: BROWN,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  input: {
+    flex: 1,
+    fontSize: 15,
+    color: '#3D1F0A',
+  },
 
-inputIcon: {
-  fontSize: 16,
-  marginRight: 8,
-},
-signupButton: {
-  backgroundColor: BROWN,
-  borderRadius: 30,
-  height: 52,
-  alignItems: 'center',
-  justifyContent: 'center',
-  marginTop: 20,
-  shadowColor: BROWN,
-  shadowOffset: { width: 0, height: 4 },
-  shadowOpacity: 0.3,
-  shadowRadius: 8,
-  elevation: 5,
-},
-signupButtonText: {
-  color: '#fff',
-  fontSize: 16,
-  fontWeight: '700',
-},
+  inputIcon: {
+    fontSize: 16,
+    marginRight: 8,
+  },
+  signupButton: {
+    backgroundColor: BROWN,
+    borderRadius: 30,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 20,
+    shadowColor: BROWN,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  signupButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
 
   footer: { alignItems: 'center', marginTop: 20 },
 

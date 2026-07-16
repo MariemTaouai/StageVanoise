@@ -1,10 +1,12 @@
-import { Redirect, Stack } from 'expo-router';
+import { Stack } from 'expo-router';
 
 export default function RootLayout() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="(auth)" />
-      <Stack.Screen name="(tabs)" />
+      {/* Supprimez (tabs) et listez vos pages directement */}
+      <Stack.Screen name="ExpeditionScreen" />
+      <Stack.Screen name="SalesDashboard" />
     </Stack>
   );
 }

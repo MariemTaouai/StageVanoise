@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, SafeAreaView, KeyboardAvoidingView,
   Platform, ScrollView, Alert, ActivityIndicator
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface BackendResponse {
   message?: string;
@@ -14,13 +15,38 @@ interface BackendResponse {
 export default function ForgotPasswordScreen() {
   const [email, setEmail] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
+  const [apiUrl, setApiUrl] = useState<string>('');
   const router = useRouter();
 
-  // ⚠️ Vérifie ton 'ipconfig' dans ton terminal Windows.
-  // Si tu utilises l'émulateur Android officiel sur ton PC, remplace par 'http://10.0.2.2:3000'
-const API_URL = 'http://10.197.21.178:3000';
+  // ✅ Récupérer l'URL sauvegardée au chargement
+  useEffect(() => {
+    const loadApiUrl = async () => {
+      try {
+        const url = await AsyncStorage.getItem('api_url');
+        if (url) {
+          setApiUrl(url);
+          console.log('✅ URL chargée:', url);
+        } else {
+          console.warn('⚠️ Aucune URL trouvée, redirection vers configuration');
+          router.replace('/ApiConfigScreen');
+        }
+      } catch (error) {
+        console.error('❌ Erreur chargement URL:', error);
+        router.replace('/ApiConfigScreen');
+      }
+    };
+    loadApiUrl();
+  }, []);
+
   const handleForgotPassword = async (): Promise<void> => {
     console.log("[DEBUG] Bouton cliqué - handleForgotPassword appelée");
+
+    // ✅ Vérifier que l'URL est chargée
+    if (!apiUrl) {
+      Alert.alert('Erreur', 'URL du serveur non configurée');
+      router.replace('/ApiConfigScreen');
+      return;
+    }
 
     const cleanEmail = email.trim();
 
@@ -39,9 +65,9 @@ const API_URL = 'http://10.197.21.178:3000';
 
     try {
       setLoading(true);
-      console.log("[DEBUG] Avant fetch vers:", `${API_URL}/forgot-password`);
+      console.log("[DEBUG] Avant fetch vers:", `${apiUrl}/forgot-password`);
 
-      const response = await fetch(`${API_URL}/forgot-password`, {
+      const response = await fetch(`${apiUrl}/forgot-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: cleanEmail }),
@@ -103,17 +129,13 @@ const API_URL = 'http://10.197.21.178:3000';
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1 }}
       >
-       
-        
         <ScrollView
           contentContainerStyle={styles.scroll}
           bounces={false}
           keyboardShouldPersistTaps="handled"
         >
-
           {/* Header */}
           <View style={styles.header}>
-            
             <Text style={styles.title}>Mot de passe oublié</Text>
             <Text style={styles.subtitle}>
               Saisissez votre adresse e-mail pour recevoir un code de vérification.
@@ -136,9 +158,7 @@ const API_URL = 'http://10.197.21.178:3000';
                 editable={!loading}
               />
             </View>
-            
 
-            {/* Bouton de validation */}
             <TouchableOpacity
               style={[styles.button, loading && { opacity: 0.6 }]}
               onPress={handleForgotPassword}
@@ -183,13 +203,4 @@ const styles = StyleSheet.create({
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
   backButton: { alignItems: 'center', marginTop: 10, paddingVertical: 5 },
   backButtonText: { color: RED, fontSize: 14, fontWeight: '600' },
-   logoWrapper: {
-    width: 100, height: 100,
-
-
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  logo: { width: 120, height: 120 },
-
 });
