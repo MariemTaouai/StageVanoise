@@ -35,9 +35,14 @@ export interface Article {
   coefUS: number;
 }
 
-export interface ArticleOF extends Article {
-  NUMOF: string;
-  quantite: number;
+export interface ArticleOF {
+  numOF: string;
+  codeArticle: string;
+  quantiteLancee: number;
+  statut?: string;
+  designation: string;
+  unite: string;
+  coefUS: number;
 }
 
 export interface ProductionLine {
@@ -68,14 +73,14 @@ const C = {
   border: "#EFE5D3",
 };
 
-const formatDate = (date: string) => {
-  if (!date) return null;
+// ✅ Utiliser le fuseau horaire Africa/Tunis (UTC+1)
+const formatDate = (date: string | null): string => {
+  if (!date) return "N/A";
   try {
     const dateObj = new Date(date);
-    if (isNaN(dateObj.getTime())) {
-      console.warn('⚠️ Date invalide:', date);
-      return date;
-    }
+    if (isNaN(dateObj.getTime())) return date;
+    
+    // ✅ Forcer le fuseau horaire Tunisia (UTC+1)
     return dateObj.toLocaleString("fr-FR", {
       day: "2-digit",
       month: "2-digit",
@@ -83,14 +88,12 @@ const formatDate = (date: string) => {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,
-      timeZone: "Africa/Tunis",
+      timeZone: "Africa/Tunis", 
     });
-  } catch (error) {
-    console.error('❌ Erreur formatDate:', error);
+  } catch {
     return date;
   }
 };
-
 const Divider = ({ label }: { label: string }) => (
   <View style={div.row}>
     <Text style={div.txt}>{label}</Text>
@@ -368,6 +371,7 @@ export default function ProductionDeclarationScreen() {
         const response = await fetchWithToken(url);
         if (response.ok) {
           const data: ArticleOF[] = await response.json();
+          console.log('📋 OFs reçus:', data);
           setOrdresFabrication(data);
         }
       } catch (e: any) {
@@ -397,7 +401,7 @@ export default function ProductionDeclarationScreen() {
     setLignesProduction(lignesProduction.filter((l) => l.id !== id));
 
   const validerDeclaration = async () => {
-    if (!apiUrl || !selectedOFData || !quantiteLancee || !lotGlobal || lignesProduction.length === 0) {
+    if (!apiUrl || !selectedOFData || !lotGlobal || lignesProduction.length === 0) {
       Alert.alert("Erreur", "Veuillez remplir tous les champs.");
       return;
     }
@@ -405,9 +409,9 @@ export default function ProductionDeclarationScreen() {
     try {
       setLoading(true);
       const payload = {
-        of: selectedOFData.codeArticle,
+        numOF: selectedOFData.numOF,
         codeArticle: selectedOFData.codeArticle,
-        quantiteLancee: parseFloat(quantiteLancee.replace(",", ".")),
+        quantiteLancee: selectedOFData.quantiteLancee,
         lot: lotGlobal,
         matricule: matricule,
         list: lignesProduction.map((l) => ({
@@ -416,6 +420,8 @@ export default function ProductionDeclarationScreen() {
           unite: selectedOFData.unite,
         })),
       };
+
+      console.log('📤 Payload:', JSON.stringify(payload, null, 2));
 
       const response = await fetchWithToken(`${apiUrl}/api/production/declarer`, {
         method: "POST",
@@ -432,7 +438,7 @@ export default function ProductionDeclarationScreen() {
           setModeProduction(result.type as "S" | "P");
         }
 
-        setSavedQuantiteLancee(quantiteLancee);
+        setSavedQuantiteLancee(String(selectedOFData.quantiteLancee));
         setDernierePaletteLignes([...lignesProduction]);
         setPaletteGeneree(codeGenere);
         setQuantiteLanceeUVCResult(result.quantiteLanceeUVC ?? null);
@@ -458,7 +464,7 @@ export default function ProductionDeclarationScreen() {
 
   const buildLabelData = (): ZplData => {
     const coef = selectedOFData?.coefUS || 1;
-    const qtyLancee = savedQuantiteLancee || quantiteLancee || "0";
+    const qtyLancee = savedQuantiteLancee || String(selectedOFData?.quantiteLancee || "0");
     const qtyLanceeBrute = parseFloat(qtyLancee.replace(",", ".")) || 0;
     const qtyLanceeUVC = modeProduction === "S" ? parseFloat((qtyLanceeBrute * coef).toFixed(2)) : undefined;
     const lines = dernierePaletteLignes.length > 0 ? dernierePaletteLignes : lignesProduction;
@@ -467,7 +473,7 @@ export default function ProductionDeclarationScreen() {
       type: modeProduction,
       palette: paletteGeneree || "",
       of: selectedOFData?.codeArticle || selectedOF,
-      numof: selectedOFData?.NUMOF || selectedOFData?.codeArticle || selectedOF,
+      numof: selectedOFData?.numOF || selectedOF,
       designation: selectedOFData?.designation || "",
       matricule: matricule,
       quantiteLancee: qtyLancee,
@@ -523,7 +529,6 @@ export default function ProductionDeclarationScreen() {
 
   if (!isAuthorized) return null;
 
-  // ✅ CONTENU PRINCIPAL (gardez votre JSX existant - il est déjà bon)
   return (
     <SafeAreaView style={s.root}>
       <Stack.Screen options={{ headerShown: false }} />
@@ -590,10 +595,10 @@ export default function ProductionDeclarationScreen() {
                 {/* OF Selection */}
                 <Divider label="ORDRE DE FABRICATION" />
                 <View style={s.pickerCard}>
-                  <Text style={s.inputLabel}>Rechercher et Sélectionner l'OF</Text>
+                  <Text style={s.inputLabel}>Rechercher et Sélectionner lOF</Text>
                   <TextInput
                     style={s.input}
-                    placeholder="Tapez pour filtrer (Ex: C...)"
+                    placeholder="Tapez pour filtrer (Ex: OF-2026...)"
                     value={searchText}
                     onChangeText={(txt) => {
                       setSearchText(txt);
@@ -612,18 +617,21 @@ export default function ProductionDeclarationScreen() {
                       <ScrollView nestedScrollEnabled style={{ maxHeight: 150 }}>
                         {ordresFabrication.map((of) => (
                           <TouchableOpacity
-                            key={of.codeArticle}
+                            key={of.numOF}
                             style={s.dropdownItem}
                             onPress={() => {
-                              setSelectedOF(of.codeArticle);
+                              setSelectedOF(of.numOF);
                               setSelectedOFData(of);
-                              setSearchText(`${of.codeArticle} - ${of.designation}`);
+                              setSearchText(`${of.numOF} `);
+                              setQuantiteLancee(String(of.quantiteLancee));
+                              setQuantiteLanceeUVCResult(of.quantiteLancee * (of.coefUS || 1));
                               setShowDropdown(false);
                             }}
                           >
                             <Text style={s.dropdownItemTxt}>
-                              {of.codeArticle} —{" "}
-                              <Text style={{ color: C.inkLight }}>{of.designation}</Text>
+                              {of.numOF} 
+                              
+                             
                             </Text>
                           </TouchableOpacity>
                         ))}
@@ -633,43 +641,40 @@ export default function ProductionDeclarationScreen() {
 
                   {selectedOFData && (
                     <View style={s.infoArticleBadge}>
-                      <Text style={s.infoArticleTxt}>
-                        <Text style={{ fontWeight: "700" }}>Article :</Text> {selectedOFData.designation}
+                      <Text style={[s.infoArticleTxt, { fontSize: 16, fontWeight: "800", color: C.red }]}>
+                        📋 {selectedOFData.numOF}
                       </Text>
                       <Text style={s.infoArticleTxt}>
-                        <Text style={{ fontWeight: "700" }}>Unité :</Text> {selectedOFData.unite || "CAR"}
+                        <Text style={{ fontWeight: "700" }}>📦 Article :</Text> {selectedOFData.codeArticle ? `${selectedOFData.codeArticle} - ${selectedOFData.designation}` : selectedOFData.designation}
                       </Text>
                       <Text style={s.infoArticleTxt}>
-                        <Text style={{ fontWeight: "700" }}>Coef US :</Text> {selectedOFData.coefUS}
+                        <Text style={{ fontWeight: "700" }}>📏 Unité :</Text> {selectedOFData.unite || "CAR"}
                       </Text>
+                      <Text style={s.infoArticleTxt}>
+                        <Text style={{ fontWeight: "700" }}>📊 Coef US :</Text> {selectedOFData.coefUS}
+                      </Text>
+                      <Text style={[s.infoArticleTxt, {
+                        color: C.red,
+                        fontSize: 18,
+                        fontWeight: "800",
+                        marginTop: 6,
+                        paddingTop: 6,
+                        borderTopWidth: 1,
+                        borderTopColor: C.border,
+                      }]}>
+                        📊 Quantité Lancée : {selectedOFData.quantiteLancee} {selectedOFData.unite || "CAR"}
+                      </Text>
+                      {modeProduction === "S" && (
+                        <Text style={[s.infoArticleTxt, { color: C.blue, fontSize: 14 }]}>
+                          → UVC : {(selectedOFData.quantiteLancee * (selectedOFData.coefUS || 1)).toFixed(2)} {selectedOFData.unite || "CAR"}
+                        </Text>
+                      )}
                     </View>
                   )}
                 </View>
 
-                {/* Quantité Lancée */}
-                <Divider label="QUANTITÉ LANCÉE" />
-                <View style={s.pickerCard}>
-                  <Text style={s.inputLabel}>Quantité Lancée</Text>
-                  <TextInput
-                    style={s.input}
-                    placeholder="Ex: 500"
-                    keyboardType="numeric"
-                    value={quantiteLancee}
-                    onChangeText={(txt) => {
-                      setQuantiteLancee(txt.replace(",", "."));
-                      setPaletteGeneree(null);
-                    }}
-                  />
-                  {modeProduction === "S" && quantiteLancee !== "" && selectedOFData && (
-                    <Text style={s.uvcPreview}>
-                      → Qte Lancée UVC :{" "}
-                      <Text style={{ fontWeight: "700", color: C.blue }}>
-                        {(parseFloat(quantiteLancee || "0") * (selectedOFData.coefUS || 1)).toFixed(2)}{" "}
-                        {selectedOFData.unite || "CAR"}
-                      </Text>
-                    </Text>
-                  )}
-                </View>
+                {/* Quantité Lancée - AFFICHAGE AUTO */}
+                
 
                 {/* Lot Global */}
                 <Divider label="IDENTIFICATION DU LOT GLOBAL" />
@@ -727,7 +732,7 @@ export default function ProductionDeclarationScreen() {
                       )}
 
                       <TouchableOpacity style={s.deleteBtn} onPress={() => supprimerLigne(ligne.id)}>
-                        <Text style={s.deleteBtnTxt}>Supprimer l'emplacement</Text>
+                        <Text style={s.deleteBtnTxt}>Supprimer l&apos;emplacement</Text>
                       </TouchableOpacity>
                     </View>
                   ))
@@ -759,7 +764,7 @@ export default function ProductionDeclarationScreen() {
                       {modeProduction === "P" ? "🔖 CODE PRESTATAIRE GÉNÉRÉ (ID) :" : "📦 NUMÉRO DE PALETTE GÉNÉRÉ :"}
                     </Text>
                     <Text style={s.paletteCode}>{paletteGeneree}</Text>
-                    <Text style={s.paletteSub}>Lié à l'OF : {selectedOF} · Lot : {lotGlobal}</Text>
+                    <Text style={s.paletteSub}>Lié à l&apos;OF : {selectedOF} · Lot : {lotGlobal}</Text>
                     {modeProduction === "S" && quantiteLanceeUVCResult !== null && (
                       <Text style={[s.paletteSub, { color: C.blue, fontWeight: "700", marginTop: 4 }]}>
                         Qte Lancée UVC : {quantiteLanceeUVCResult.toFixed(2)} CAR
@@ -772,7 +777,7 @@ export default function ProductionDeclarationScreen() {
                         </Text>
                       </TouchableOpacity>
                       <TouchableOpacity style={[s.printBtn, { marginTop: 10 }]} onPress={telechargerPdf} disabled={isPrinting}>
-                        <Text style={s.printBtnTxt}>⬇️ Télécharger l'étiquette PDF</Text>
+                        <Text style={s.printBtnTxt}>⬇️ Télécharger l&apos;étiquette PDF</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -780,7 +785,7 @@ export default function ProductionDeclarationScreen() {
               </View>
             )}
 
-      {activeTab === "historique" && (
+            {activeTab === "historique" && (
               <View style={{ paddingBottom: 30 }}>
                 <View
                   style={{
@@ -814,7 +819,7 @@ export default function ProductionDeclarationScreen() {
                     <ActivityIndicator size="small" color={C.red} />
                   </View>
                 ) : historiquePalettes.length === 0 ? (
-                  <Text style={s.emptyText}>Aucune palette trouvée dans l'historique.</Text>
+                  <Text style={s.emptyText}>Aucune palette trouvée dans l&apos;historique.</Text>
                 ) : (
                   <>
                     {historiquePalettes.map((pal, idx) => (

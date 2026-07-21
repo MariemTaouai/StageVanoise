@@ -21,6 +21,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { LineChart } from "react-native-chart-kit";
 import { getApiUrl } from "../../Services/apiService";
+import { downloadLabelPdf, generateZplLabel, sendToPrinter, type ZplData } from "../../Services/printService";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const SIDEBAR_WIDTH = 280;
@@ -44,6 +45,11 @@ const C = {
 const MOIS = ["Jan", "Fév", "Mar", "Avr", "Mai", "Jun", "Jul", "Aoû", "Sep", "Oct", "Nov", "Déc"];
 const ITEMS_PER_PAGE = 3;
 
+interface SousLotDetail {
+  sousLot: string;
+  quantiteLancee: number;
+  unite: string;
+}
 
 interface ExpeditionHistoryItem {
   id: number;
@@ -51,14 +57,15 @@ interface ExpeditionHistoryItem {
   codeDeclaration: string | null;
   numOF: string;
   article: string;
-  quantiteLancee: number;
+  quantiteTotale: number;
   unite: string;
   date_expedition: string;
   lot: string;
-  sousLot: string;
+  sousLots: SousLotDetail[];
   expedie: boolean;
 }
 
+// ✅ Interface ScannedData avec sousLots
 interface ScannedData {
   id: number;
   palette?: string | null;
@@ -78,6 +85,12 @@ interface ScannedData {
   quantiteLanceeUVC: number | null;
   qteUSUVC: number | null;
   codeArticle: string;
+  sousLots?: {
+    sousLot: string;
+    quantiteLancee: number;
+    qteUS: number;
+    unite: string;
+  }[];
 }
 
 interface Stats {
@@ -85,14 +98,13 @@ interface Stats {
   monthly: { mois: number; total: number }[];
 }
 
-
 const formatDate = (date: string | null): string => {
   if (!date) return "N/A";
   try {
     const dateObj = new Date(date);
     if (isNaN(dateObj.getTime())) return date;
     
-    // ✅ Utiliser UTC pour éviter le décalage horaire
+    // ✅ Forcer le fuseau horaire Tunisia (UTC+1)
     return dateObj.toLocaleString("fr-FR", {
       day: "2-digit",
       month: "2-digit",
@@ -100,15 +112,14 @@ const formatDate = (date: string | null): string => {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,
-      timeZone: "UTC", // ← Forcer UTC
+      timeZone: "Africa/Tunis", // ✅ Fuseau horaire de la Tunisie
     });
   } catch {
     return date;
   }
 };
-
 const isExpedie = (data: ScannedData): boolean => {
-  return data.expedie === true ;
+  return data.expedie === true;
 };
 
 const getTypeLabel = (data: ScannedData): string => {
@@ -117,6 +128,10 @@ const getTypeLabel = (data: ScannedData): string => {
   return "Type inconnu";
 };
 
+const getPaletteIdentifiant = (data: ScannedData | null): string => {
+  if (!data) return "";
+  return data.palette || data.codeDeclaration || "";
+};
 
 export default function ExpeditionScreen() {
   console.log('📦 [ExpeditionScreen] Écran EXPÉDITION chargé !');
@@ -144,13 +159,15 @@ export default function ExpeditionScreen() {
   const [totalPages, setTotalPages] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
 
+  const [palettesExpediees, setPalettesExpediees] = useState(0);
+  const countedPalettesRef = useRef<Set<string>>(new Set());
+
   const [permission, requestPermission] = useCameraPermissions();
 
   const slideAnim = useRef(new Animated.Value(-SIDEBAR_WIDTH)).current;
   const overlayAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scrollViewRef = useRef<ScrollView>(null);
-
 
   const refreshAccessToken = useCallback(async (): Promise<string | null> => {
     try {
@@ -234,12 +251,11 @@ export default function ExpeditionScreen() {
     }
   }, [refreshAccessToken, clearTokensAndLogout]);
 
-
   useEffect(() => {
     const checkAccess = async () => {
       try {
         console.log('🔍 [ExpeditionScreen] Vérification des rôles...');
-        
+
         const accessToken = await AsyncStorage.getItem('access_token');
         if (!accessToken) {
           console.log('❌ Pas de token');
@@ -261,21 +277,21 @@ export default function ExpeditionScreen() {
         const userRoles = JSON.parse(rolesString);
         console.log('👤 Rôles:', userRoles);
         setUserRoles(userRoles);
-        
-        const hasAccess = userRoles.some((role: string) => 
+
+        const hasAccess = userRoles.some((role: string) =>
           ['Expéditeur', 'Admin'].includes(role)
         );
-        
+
         if (!hasAccess) {
           Alert.alert('⛔ Accès refusé', 'Vous n\'avez pas les droits pour accéder à cette page.');
           router.replace('/(auth)/login');
           setIsChecking(false);
           return;
         }
-        
+
         console.log('✅ Accès autorisé !');
         setIsAuthorized(true);
-        
+
       } catch (error) {
         console.error('❌ Erreur vérification:', error);
         router.replace('/(auth)/login');
@@ -283,10 +299,9 @@ export default function ExpeditionScreen() {
         setIsChecking(false);
       }
     };
-    
+
     checkAccess();
   }, []);
-
 
   const fetchStats = useCallback(async (url?: string) => {
     const baseUrl = url || apiUrl;
@@ -294,7 +309,7 @@ export default function ExpeditionScreen() {
       console.warn("⚠️ API URL non configurée");
       return;
     }
-    
+
     try {
       console.log("📊 Récupération des statistiques...");
       const response = await fetchWithToken(`${baseUrl}/api/expedition/stats`);
@@ -307,24 +322,39 @@ export default function ExpeditionScreen() {
     }
   }, [apiUrl, fetchWithToken]);
 
-
   const fetchHistorique = useCallback(async (pageNum = 1, search = "") => {
     if (!apiUrl) return;
-    
+
     try {
       setLoadingHist(true);
       const url = `${apiUrl}/api/expedition/historique?page=${pageNum}&search=${encodeURIComponent(search)}&limit=${ITEMS_PER_PAGE}`;
       console.log(`📜 FETCH HISTORIQUE - Page ${pageNum}:`, url);
       const response = await fetchWithToken(url);
-      
+
       if (response.ok) {
         const data = await response.json();
         if (data.items) {
-          setHistorique(data.items);
+          const normalized: ExpeditionHistoryItem[] = data.items.map((item: any) => ({
+            id: item.id,
+            palette: item.palette ?? null,
+            codeDeclaration: item.codeDeclaration ?? null,
+            numOF: item.numOF,
+            article: item.article,
+            quantiteTotale: item.quantiteTotale ?? item.quantiteLancee ?? 0,
+            unite: item.unite,
+            date_expedition: item.date_expedition,
+            lot: item.lot,
+            sousLots: Array.isArray(item.sousLots)
+              ? item.sousLots
+              : (item.sousLot ? [{ sousLot: item.sousLot, quantiteLancee: item.quantiteLancee ?? 0, unite: item.unite }] : []),
+            expedie: item.expedie,
+          }));
+
+          setHistorique(normalized);
           setTotalItems(data.total || 0);
           setTotalPages(data.totalPages || 1);
           setCurrentPage(pageNum);
-          console.log(`✅ Historique: page ${pageNum}/${data.totalPages}, ${data.items.length} éléments`);
+          console.log(`✅ Historique: page ${pageNum}/${data.totalPages}, ${normalized.length} palettes`);
         }
       }
     } catch (e) {
@@ -334,7 +364,6 @@ export default function ExpeditionScreen() {
       setLoadingHist(false);
     }
   }, [apiUrl, fetchWithToken]);
-
 
   const goToPage = useCallback((pageNum: number) => {
     if (pageNum < 1 || pageNum > totalPages || pageNum === currentPage) return;
@@ -357,27 +386,25 @@ export default function ExpeditionScreen() {
     fetchHistorique(1, "");
   }, [fetchHistorique]);
 
-  
-
   useEffect(() => {
     const init = async () => {
       try {
         const url = await getApiUrl();
         setApiUrl(url);
         console.log("✅ API URL chargée:", url);
-        
+
         const userData = await AsyncStorage.getItem("user");
         if (userData) {
           const user = JSON.parse(userData);
           setNom(user.nom || "Opérateur");
           setUserRoles(user.roles || []);
         }
-        
+
         await fetchStats(url);
         await fetchHistorique(1, "");
-        
+
         Animated.timing(fadeAnim, { toValue: 1, duration: 800, useNativeDriver: true }).start();
-        
+
       } catch (error) {
         console.error("❌ Erreur initialisation:", error);
         Alert.alert("Erreur", "Impossible de charger les données");
@@ -398,14 +425,12 @@ export default function ExpeditionScreen() {
     }, [apiUrl, searchTerm, currentPage, fetchStats, fetchHistorique])
   );
 
-
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await fetchStats();
     await fetchHistorique(1, searchTerm);
     setRefreshing(false);
   }, [fetchStats, fetchHistorique, searchTerm]);
-
 
   const openSidebar = useCallback(() => {
     setSidebarOpen(true);
@@ -436,25 +461,24 @@ export default function ExpeditionScreen() {
     }
   }, []);
 
-
   const handleBarcodeScanned = useCallback(async ({ data }: { data: string }) => {
     if (!apiUrl) {
       Alert.alert("Erreur", "URL API non configurée");
       return;
     }
-    
+
     setShowCamera(false);
     try {
       const response = await fetchWithToken(
         `${apiUrl}/api/expedition/check/${encodeURIComponent(data.trim())}`
       );
-      
+
       if (!response.ok) {
         const errorData = await response.json();
         Alert.alert("Erreur", errorData.message || "Palette non trouvée.");
         return;
       }
-      
+
       const result = await response.json();
       console.log("📦 Données complètes:", result);
       setScannedData(result);
@@ -462,63 +486,42 @@ export default function ExpeditionScreen() {
     } catch (e) {
       Alert.alert("Erreur", "Serveur injoignable");
     }
-  }, [apiUrl, fetchWithToken]);
-
-
-  const validerExpedition = useCallback(async () => {
-    if (!apiUrl) {
-      Alert.alert("❌ Erreur", "URL du serveur non configurée");
-      return;
-    }
-    
-    if (!scannedData) {
-      Alert.alert("❌ Erreur", "Aucune palette scannée");
-      return;
-    }
-    
-    if (isExpedie(scannedData)) {
-      Alert.alert(
-        "⚠️ Attention", 
-        "Cette palette a déjà été expédiée !\n" +
-        `Date d'expédition : ${formatDate(scannedData.date_expedition)}`
-      );
-      return;
-    }
-    
-    const codeDisplay = scannedData.palette || scannedData.codeDeclaration || "N/A";
-    Alert.alert(
-      "📦 Confirmation",
-      `Voulez-vous vraiment expédier la palette :\n"${codeDisplay}" ?`,
-      [
-        { text: "Annuler", style: "cancel" },
-        { text: "Confirmer", onPress: () => expedierPalette() }
-      ]
-    );
-  }, [apiUrl, scannedData]);
+  }, [apiUrl, fetchWithToken, fadeAnim]);
 
   const expedierPalette = useCallback(async () => {
     setLoading(true);
     try {
       const codeToValidate = scannedData?.palette || scannedData?.codeDeclaration;
       console.log(`📤 Validation de la palette: ${codeToValidate}`);
-      
+
       const response = await fetchWithToken(`${apiUrl}/api/expedition/valider`, {
         method: "POST",
         body: JSON.stringify({ code: codeToValidate }),
       });
-      
+
       const result = await response.json();
-      
+
       if (response.ok) {
         Alert.alert("✅ Succès", `Palette validée avec succès !\n${result.message || ""}`);
+
+        const identifiantPalette = getPaletteIdentifiant(scannedData);
+
+        if (identifiantPalette && !countedPalettesRef.current.has(identifiantPalette)) {
+          countedPalettesRef.current.add(identifiantPalette);
+          setPalettesExpediees(prev => prev + 1);
+          console.log(`📊 Nouvelle palette expédiée (total session: ${countedPalettesRef.current.size})`);
+        } else {
+          console.log(`📊 Sous-lot supplémentaire pour la palette "${identifiantPalette}" — compteur inchangé`);
+        }
+
         setScannedData(null);
         await fetchStats();
         await fetchHistorique(1, searchTerm);
       } else {
         let errorMessage = "Erreur lors de la validation.";
         if (result.error) {
-          errorMessage = result.error.includes("déjà") 
-            ? "⚠️ Cette palette a déjà été expédiée." 
+          errorMessage = result.error.includes("déjà")
+            ? "⚠️ Cette palette a déjà été expédiée."
             : result.error;
         }
         Alert.alert("❌ Erreur", errorMessage);
@@ -532,6 +535,105 @@ export default function ExpeditionScreen() {
     }
   }, [apiUrl, scannedData, fetchWithToken, fetchStats, fetchHistorique, searchTerm]);
 
+  const validerExpedition = useCallback(async () => {
+    if (!apiUrl) {
+      Alert.alert("❌ Erreur", "URL du serveur non configurée");
+      return;
+    }
+
+    if (!scannedData) {
+      Alert.alert("❌ Erreur", "Aucune palette scannée");
+      return;
+    }
+
+    if (isExpedie(scannedData)) {
+      Alert.alert(
+        "⚠️ Attention",
+        "Cette palette a déjà été expédiée !\n" +
+        `Date d'expédition : ${formatDate(scannedData.date_expedition)}`
+      );
+      return;
+    }
+
+    const codeDisplay = scannedData.palette || scannedData.codeDeclaration || "N/A";
+    Alert.alert(
+      "📦 Confirmation",
+      `Voulez-vous vraiment expédier la palette :\n"${codeDisplay}" ?`,
+      [
+        { text: "Annuler", style: "cancel" },
+        { text: "Confirmer", onPress: () => expedierPalette() }
+      ]
+    );
+  }, [apiUrl, scannedData, expedierPalette]);
+
+  const imprimerPalette = useCallback(async () => {
+    if (!scannedData) {
+      Alert.alert("Erreur", "Aucune palette scannée");
+      return;
+    }
+
+    try {
+      const zplData: ZplData = {
+        type: scannedData.type || "S",
+        palette: scannedData.palette || scannedData.codeDeclaration || "N/A",
+        of: scannedData.numOF || "N/A",
+        numof: scannedData.numOF || "N/A",
+        designation: scannedData.article || "Inconnu",
+        matricule: "",
+        quantiteLancee: String(scannedData.quantiteLancee || 0),
+        quantiteLanceeUVC: scannedData.quantiteLanceeUVC || undefined,
+        lignes: [
+          {
+            slot: scannedData.sousLot || "N/A",
+            qty: scannedData.quantiteLancee || 0,
+            LOT: scannedData.lot || "N/A",
+            qteUVC: scannedData.quantiteLanceeUVC || undefined,
+          }
+        ],
+        dateExp: scannedData.date_expedition || null,
+      };
+
+      const zpl = generateZplLabel(zplData);
+      await sendToPrinter(zpl);
+    } catch (error) {
+      console.error("❌ Erreur impression:", error);
+      Alert.alert("Erreur", "Impossible d'imprimer l'étiquette");
+    }
+  }, [scannedData]);
+
+  const telechargerPdf = useCallback(async () => {
+    if (!scannedData) {
+      Alert.alert("Erreur", "Aucune palette scannée");
+      return;
+    }
+
+    try {
+      const zplData: ZplData = {
+        type: scannedData.type || "S",
+        palette: scannedData.palette || scannedData.codeDeclaration || "N/A",
+        of: scannedData.numOF || "N/A",
+        numof: scannedData.numOF || "N/A",
+        designation: scannedData.article || "Inconnu",
+        matricule: "",
+        quantiteLancee: String(scannedData.quantiteLancee || 0),
+        quantiteLanceeUVC: scannedData.quantiteLanceeUVC ?? undefined,
+        lignes: [
+          {
+            slot: scannedData.sousLot || "N/A",
+            qty: scannedData.quantiteLancee || 0,
+            LOT: scannedData.lot || "N/A",
+            qteUVC: scannedData.quantiteLanceeUVC ?? undefined,
+          }
+        ],
+        dateExp: scannedData.date_expedition || null,
+      };
+
+      await downloadLabelPdf(zplData);
+    } catch (error) {
+      console.error("❌ Erreur téléchargement PDF:", error);
+      Alert.alert("Erreur", "Impossible de télécharger le PDF");
+    }
+  }, [scannedData]);
 
   const chartLabels = stats.monthly?.map((d) => MOIS[(d.mois || 1) - 1]) || [];
   const chartDataValues = stats.monthly?.map((d) => d.total || 0) || [];
@@ -556,7 +658,6 @@ export default function ExpeditionScreen() {
     propsForDots: { r: "5", strokeWidth: "2", stroke: C.red },
     propsForBackgroundLines: { stroke: "rgba(125,110,101,0.15)", strokeWidth: 1 },
   };
-
 
   if (isChecking) {
     return (
@@ -587,7 +688,6 @@ export default function ExpeditionScreen() {
       <Stack.Screen options={{ headerShown: false }} />
       <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
 
-      {/* Top bar */}
       <View style={styles.topbar}>
         <TouchableOpacity style={styles.hamburger} onPress={openSidebar}>
           <Text style={styles.hamburgerIcon}>☰</Text>
@@ -693,7 +793,7 @@ export default function ExpeditionScreen() {
                       {scannedData.type === 'S' ? (
                         <>
                           <View style={[styles.infoRow, styles.infoRowHighlight]}>
-                            <Text style={styles.infoLabel}>Quantité Lancée</Text>
+                            <Text style={styles.infoLabel}>Quantité Totale</Text>
                             <Text style={[styles.infoValue, styles.infoValueHighlight]}>
                               {scannedData.quantiteLancee || 0} {scannedData.unite || ""}
                             </Text>
@@ -724,7 +824,7 @@ export default function ExpeditionScreen() {
                       ) : (
                         <>
                           <View style={[styles.infoRow, styles.infoRowHighlight]}>
-                            <Text style={styles.infoLabel}>Quantité Lancée</Text>
+                            <Text style={styles.infoLabel}>Quantité Totale</Text>
                             <Text style={[styles.infoValue, styles.infoValueHighlight]}>
                               {scannedData.quantiteLancee || 0} {scannedData.unite || ""}
                             </Text>
@@ -760,32 +860,60 @@ export default function ExpeditionScreen() {
                       </View>
                     </View>
 
-                    {/* Lots */}
+                    {/* ✅ LOTS & SOUS-LOTS - CORRIGÉ */}
                     <View style={styles.infoGroup}>
                       <Text style={styles.infoGroupTitle}>🏷️ LOTS & SOUS-LOTS</Text>
-                      <View style={styles.lotHeader}>
-                        <Text style={styles.lotHeaderText}>Lot / Sous-lot</Text>
-                        <Text style={styles.lotHeaderText}>Quantité</Text>
-                      </View>
+                      
+                      {/* Lot principal */}
                       <View style={styles.lotRow}>
                         <View style={styles.lotInfo}>
                           <Text style={styles.lotLabel}>📦 Lot</Text>
                           <Text style={styles.lotValue}>{scannedData.lot || "N/A"}</Text>
                         </View>
                         <View style={styles.lotInfo}>
-                          <Text style={styles.lotLabel}>Quantité</Text>
-                          <Text style={styles.lotValue}>{scannedData.quantiteLancee || 0} {scannedData.unite || ""}</Text>
+                          <Text style={styles.lotLabel}>Qté Totale</Text>
+                          <Text style={styles.lotValue}>
+                            {scannedData.quantiteLancee || 0} {scannedData.unite || ""}
+                          </Text>
                         </View>
                       </View>
-                      <View style={[styles.lotRow, styles.lotRowSub]}>
-                        <View style={styles.lotInfo}>
-                          <Text style={styles.lotLabel}>📎 Sous-lot</Text>
-                          <Text style={styles.lotValue}>{scannedData.sousLot || "N/A"}</Text>
-                        </View>
-                        <View style={styles.lotInfo}>
-                          <Text style={styles.lotLabel}>Qté US</Text>
-                          <Text style={styles.lotValue}>{scannedData.qteUS || "N/A"} {scannedData.unite || ""}</Text>
-                        </View>
+
+                      {/* ✅ Liste de TOUS les sous-lots */}
+                      <Text style={styles.sousLotsTitle}>📎 Détail des sous-lots :</Text>
+                      
+                      {scannedData.sousLots && scannedData.sousLots.length > 0 ? (
+                        scannedData.sousLots.map((sl, idx) => (
+                          <View key={idx} style={styles.sousLotRowDetail}>
+                            <View style={styles.sousLotInfo}>
+                              <Text style={styles.sousLotLabel}>Sous-lot {idx + 1}</Text>
+                              <Text style={styles.sousLotValue}>{sl.sousLot || "N/A"}</Text>
+                            </View>
+                            <View style={styles.sousLotInfo}>
+                              <Text style={styles.sousLotLabel}>Qté</Text>
+                              <Text style={styles.sousLotValue}>
+                                {sl.quantiteLancee || 0} {sl.unite || scannedData.unite || ""}
+                              </Text>
+                            </View>
+                            {scannedData.type === 'S' && (
+                              <View style={styles.sousLotInfo}>
+                                <Text style={styles.sousLotLabel}>UVC</Text>
+                                <Text style={[styles.sousLotValue, { color: C.blue }]}>
+                                  {(sl.quantiteLancee * (scannedData.coefUS || 1)).toFixed(2)}
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+                        ))
+                      ) : (
+                        <Text style={styles.sousLotEmpty}>Aucun sous-lot enregistré</Text>
+                      )}
+
+                      {/* ✅ Total */}
+                      <View style={styles.totalRow}>
+                        <Text style={styles.totalLabel}>📊 Total palette :</Text>
+                        <Text style={styles.totalValue}>
+                          {scannedData.quantiteLancee || 0} {scannedData.unite || ""}
+                        </Text>
                       </View>
                     </View>
 
@@ -807,19 +935,19 @@ export default function ExpeditionScreen() {
                     {/* Statut */}
                     <View style={styles.infoGroup}>
                       <Text style={styles.infoGroupTitle}>📌 STATUT</Text>
-                      <View style={[styles.infoRow, { 
-                        backgroundColor: isExpedie(scannedData) ? '#E8F5E9' : '#FFEBEE', 
-                        borderRadius: 8, 
-                        paddingHorizontal: 12, 
+                      <View style={[styles.infoRow, {
+                        backgroundColor: isExpedie(scannedData) ? '#E8F5E9' : '#FFEBEE',
+                        borderRadius: 8,
+                        paddingHorizontal: 12,
                         paddingVertical: 10,
                         borderWidth: 1,
                         borderColor: isExpedie(scannedData) ? C.green : C.red,
                       }]}>
                         <Text style={[styles.infoLabel, { fontWeight: '700', fontSize: 14 }]}>Statut</Text>
-                        <Text style={[styles.infoValue, { 
-                          fontWeight: '800', 
-                          fontSize: 16, 
-                          color: isExpedie(scannedData) ? C.green : C.red 
+                        <Text style={[styles.infoValue, {
+                          fontWeight: '800',
+                          fontSize: 16,
+                          color: isExpedie(scannedData) ? C.green : C.red
                         }]}>
                           {isExpedie(scannedData) ? '✅ Expédiée' : '⏳ En attente'}
                         </Text>
@@ -837,16 +965,33 @@ export default function ExpeditionScreen() {
                       </TouchableOpacity>
                     </View>
                   ) : (
-                    <TouchableOpacity style={styles.validBtn} onPress={validerExpedition} disabled={loading}>
-                      {loading ? (
-                        <ActivityIndicator color="#FFF" />
-                      ) : (
-                        <>
-                          <Text style={styles.btnTxt}>VALIDER L'EXPÉDITION</Text>
-                          <Text style={styles.btnSub}>Confirmer la sortie du stock</Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
+                    <>
+                      <TouchableOpacity style={styles.validBtn} onPress={validerExpedition} disabled={loading}>
+                        {loading ? (
+                          <ActivityIndicator color="#FFF" />
+                        ) : (
+                          <>
+                            <Text style={styles.btnTxt}>VALIDER L&apos;EXPÉDITION</Text>
+                            <Text style={styles.btnSub}>Confirmer la sortie du stock</Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+
+                      <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+                        <TouchableOpacity
+                          style={[styles.printBtn, { flex: 1 }]}
+                          onPress={imprimerPalette}
+                        >
+                          <Text style={styles.printBtnTxt}>🖨️ Imprimer</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.printBtn, { flex: 1, backgroundColor: C.blue }]}
+                          onPress={telechargerPdf}
+                        >
+                          <Text style={styles.printBtnTxt}>⬇️ PDF</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </>
                   )}
                 </View>
               )}
@@ -899,28 +1044,39 @@ export default function ExpeditionScreen() {
                         </View>
                       </View>
                       <Text style={styles.histArticle}>📦 {item.article || "Article inconnu"}</Text>
+
                       <View style={styles.histDetails}>
                         <View style={styles.histDetailRow}>
                           <Text style={styles.histDetailLabel}>🏭 OF</Text>
                           <Text style={styles.histDetailValue}>{item.numOF || "N/A"}</Text>
                         </View>
                         <View style={styles.histDetailRow}>
-                          <Text style={styles.histDetailLabel}>📊 Qté</Text>
-                          <Text style={styles.histDetailValue}>{item.quantiteLancee || 0} {item.unite || "CAR"}</Text>
-                        </View>
-                        <View style={styles.histDetailRow}>
                           <Text style={styles.histDetailLabel}>🏷️ Lot</Text>
                           <Text style={styles.histDetailValue}>{item.lot || "N/A"}</Text>
                         </View>
                         <View style={styles.histDetailRow}>
-                          <Text style={styles.histDetailLabel}>📎 Sous-lot</Text>
-                          <Text style={styles.histDetailValue}>{item.sousLot || "N/A"}</Text>
+                          <Text style={styles.histDetailLabel}>📊 Qté totale</Text>
+                          <Text style={styles.histDetailValue}>{item.quantiteTotale || 0} {item.unite || "CAR"}</Text>
                         </View>
                         <View style={styles.histDetailRow}>
                           <Text style={styles.histDetailLabel}>📅 Expédié le</Text>
                           <Text style={styles.histDetailValue}>{formatDate(item.date_expedition)}</Text>
                         </View>
                       </View>
+
+                      {item.sousLots && item.sousLots.length > 0 && (
+                        <View style={styles.sousLotsBlock}>
+                          <Text style={styles.sousLotsTitle}>
+                            📎 Sous-lots ({item.sousLots.length})
+                          </Text>
+                          {item.sousLots.map((sl, i) => (
+                            <View key={i} style={styles.sousLotRow}>
+                              <Text style={styles.sousLotName}>{sl.sousLot || "N/A"}</Text>
+                              <Text style={styles.sousLotQty}>{sl.quantiteLancee || 0} {sl.unite || item.unite || ""}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      )}
                     </View>
                   ))}
 
@@ -999,7 +1155,6 @@ export default function ExpeditionScreen() {
         </Animated.View>
       </ScrollView>
 
-      {/* Caméra */}
       {showCamera && (
         <View style={StyleSheet.absoluteFill}>
           <CameraView style={StyleSheet.absoluteFill} onBarcodeScanned={handleBarcodeScanned} />
@@ -1009,7 +1164,6 @@ export default function ExpeditionScreen() {
         </View>
       )}
 
-      {/* Sidebar */}
       {sidebarOpen && (
         <Animated.View style={[styles.overlay, { opacity: overlayAnim }]}>
           <TouchableOpacity style={StyleSheet.absoluteFill} onPress={closeSidebar} />
@@ -1100,8 +1254,6 @@ export default function ExpeditionScreen() {
   );
 }
 
-
-
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: C.bg },
   topbar: {
@@ -1146,10 +1298,10 @@ const styles = StyleSheet.create({
   logo: { width: 55, height: 32 },
   redRule: { height: 3, backgroundColor: C.red },
   scroll: { padding: 20, paddingBottom: 40 },
-  
+
   loadWrap: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
   loadTxt: { color: C.inkLight, fontSize: 13 },
-  
+
   statsCard: {
     backgroundColor: C.red,
     padding: 24,
@@ -1189,7 +1341,7 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   statsSub: { color: "#FFD1D1", fontSize: 12, opacity: 0.8 },
-  
+
   scanBtn: {
     backgroundColor: C.ink,
     padding: 24,
@@ -1205,7 +1357,7 @@ const styles = StyleSheet.create({
   scanBtnIcon: { fontSize: 40, marginBottom: 8 },
   scanBtnTxt: { color: "#FFF", fontWeight: "700", fontSize: 16, letterSpacing: 1 },
   scanBtnSub: { color: "rgba(255,255,255,0.6)", fontSize: 12, marginTop: 4 },
-  
+
   infoCard: {
     backgroundColor: C.surface,
     padding: 16,
@@ -1247,7 +1399,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   infoCloseTxt: { color: C.red, fontSize: 16, fontWeight: "700" },
-  
+
   infoGroup: {
     marginBottom: 10,
     backgroundColor: "#FFF",
@@ -1266,7 +1418,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: C.border,
   },
-  
+
   infoRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1290,7 +1442,7 @@ const styles = StyleSheet.create({
   infoLabel: { fontSize: 13, color: C.inkLight, fontWeight: "600", flex: 0.45 },
   infoValue: { fontSize: 13, color: C.ink, fontWeight: "600", flex: 0.55, textAlign: "right", flexWrap: "wrap" },
   infoValueHighlight: { fontSize: 15, fontWeight: "800", color: C.red },
-  
+
   uvcRow: {
     backgroundColor: "#EFF6FF",
     borderRadius: 6,
@@ -1301,7 +1453,7 @@ const styles = StyleSheet.create({
   },
   uvcLabel: { color: C.blue, fontWeight: "700" },
   uvcValue: { color: C.blue, fontWeight: "700" },
-  
+
   lotHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1330,10 +1482,71 @@ const styles = StyleSheet.create({
   lotInfo: { flex: 1, alignItems: "center" },
   lotLabel: { fontSize: 10, color: C.inkLight, fontWeight: "500" },
   lotValue: { fontSize: 13, color: C.ink, fontWeight: "700", marginTop: 2 },
-  
+
+  // ✅ Styles pour les sous-lots détaillés
+  sousLotsTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.inkMid,
+    marginTop: 8,
+    marginBottom: 6,
+  },
+  sousLotRowDetail: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    alignItems: "center",
+    backgroundColor: C.surface,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    marginBottom: 4,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  sousLotInfo: {
+    flex: 1,
+    alignItems: "center",
+  },
+  sousLotLabel: {
+    fontSize: 9,
+    color: C.inkLight,
+    fontWeight: "500",
+  },
+  sousLotValue: {
+    fontSize: 12,
+    color: C.ink,
+    fontWeight: "700",
+  },
+  sousLotEmpty: {
+    fontSize: 12,
+    color: C.inkLight,
+    fontStyle: "italic",
+    textAlign: "center",
+    paddingVertical: 8,
+  },
+  totalRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 2,
+    borderTopColor: C.red,
+  },
+  totalLabel: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: C.ink,
+  },
+  totalValue: {
+    fontSize: 16,
+    fontWeight: "900",
+    color: C.red,
+  },
+
   statusExpedie: { color: C.green, fontWeight: "700" },
   statusNonExpedie: { color: C.red, fontWeight: "700" },
-  
+
   errorCard: {
     backgroundColor: C.redSoft,
     padding: 16,
@@ -1348,7 +1561,7 @@ const styles = StyleSheet.create({
   errorSub: { color: C.inkLight, fontSize: 12, marginTop: 4, textAlign: "center" },
   errorBtn: { marginTop: 10, paddingVertical: 8, paddingHorizontal: 24, backgroundColor: C.red, borderRadius: 8 },
   errorBtnTxt: { color: "#FFF", fontWeight: "600" },
-  
+
   validBtn: {
     backgroundColor: C.green,
     padding: 14,
@@ -1363,7 +1576,24 @@ const styles = StyleSheet.create({
   },
   btnTxt: { color: "#FFF", fontWeight: "bold", fontSize: 15, letterSpacing: 1 },
   btnSub: { color: "rgba(255,255,255,0.7)", fontSize: 11, marginTop: 2 },
-  
+
+  printBtn: {
+    backgroundColor: C.blue,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+    marginTop: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 44,
+    flex: 1,
+  },
+  printBtnTxt: {
+    color: "#FFF",
+    fontWeight: "700",
+    fontSize: 13
+  },
+
   chartCard: {
     backgroundColor: C.surface,
     borderRadius: 20,
@@ -1389,7 +1619,7 @@ const styles = StyleSheet.create({
   chartEmpty: { height: 200, alignItems: "center", justifyContent: "center" },
   chartEmptyText: { color: C.inkLight, fontSize: 16, fontWeight: "600" },
   chartEmptySub: { color: C.inkFaint, fontSize: 13, marginTop: 4 },
-  
+
   closeCam: {
     position: "absolute",
     top: 50,
@@ -1401,7 +1631,7 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   closeCamTxt: { color: "#FFF", fontWeight: "bold", fontSize: 14 },
-  
+
   overlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(31,22,16,0.4)",
@@ -1418,7 +1648,7 @@ const styles = StyleSheet.create({
     borderRightColor: C.border,
     zIndex: 100,
   },
-  
+
   footer: { alignItems: "center", paddingVertical: 24, marginTop: 10 },
   footerDivider: { width: 40, height: 1, backgroundColor: C.border, borderRadius: 1, marginBottom: 16 },
   copyright: { fontSize: 12, color: C.inkLight, textAlign: "center", lineHeight: 20 },
@@ -1440,7 +1670,7 @@ const styles = StyleSheet.create({
   searchBarInput: { flex: 1, fontSize: 14, color: C.ink, fontWeight: "500" },
   clearSearchContainer: { padding: 4, backgroundColor: "rgba(31,22,16,0.1)", borderRadius: 100 },
   clearSearchText: { fontSize: 10, color: C.inkMid, fontWeight: "bold" },
-  
+
   histCounter: {
     fontSize: 12,
     color: C.inkLight,
@@ -1448,7 +1678,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     fontWeight: "500",
   },
-  
+
   emptyContainer: {
     alignItems: "center",
     justifyContent: "center",
@@ -1457,7 +1687,7 @@ const styles = StyleSheet.create({
   emptyIcon: { fontSize: 48, marginBottom: 16 },
   emptyTitle: { fontSize: 18, fontWeight: "700", color: C.inkMid, marginBottom: 8 },
   emptySub: { fontSize: 14, color: C.inkLight, textAlign: "center" },
-  
+
   histCard: {
     backgroundColor: C.surface,
     borderRadius: 12,
@@ -1499,7 +1729,29 @@ const styles = StyleSheet.create({
   },
   histDetailLabel: { fontSize: 12, color: C.inkLight, fontWeight: "500" },
   histDetailValue: { fontSize: 12, color: C.ink, fontWeight: "600" },
-  
+
+  sousLotsBlock: {
+    marginTop: 8,
+    backgroundColor: "#FFF",
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderStyle: "dashed",
+  },
+
+  sousLotRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    backgroundColor: C.surface,
+    borderRadius: 6,
+    marginBottom: 3,
+  },
+  sousLotName: { fontSize: 12, color: C.inkMid, fontWeight: "700" },
+  sousLotQty: { fontSize: 12, color: C.inkLight, fontWeight: "600" },
+
   paginationWrapper: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1531,7 +1783,6 @@ const styles = StyleSheet.create({
   },
   pageBadgeTxt: { color: C.red, fontWeight: "800", fontSize: 12 },
 });
-
 
 const sb = StyleSheet.create({
   stripe: { height: 4, backgroundColor: C.red },
@@ -1600,7 +1851,7 @@ const sb = StyleSheet.create({
     borderRadius: 2,
     backgroundColor: C.cream,
   },
-  
+
   switchRoleItem: {
     flexDirection: "row",
     alignItems: "center",
@@ -1623,7 +1874,7 @@ const sb = StyleSheet.create({
     marginTop: 4,
     marginBottom: 8,
   },
-  
+
   footer: {
     position: "absolute",
     bottom: 0,

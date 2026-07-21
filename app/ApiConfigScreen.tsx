@@ -1,9 +1,16 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { router, Stack } from "expo-router";
-import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { router } from "expo-router";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
+  ActivityIndicator,
+  Alert,
   Animated,
-  
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -14,12 +21,8 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  ActivityIndicator,
-  Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-
-
 
 const C = {
   bg: "#FFFFFF",
@@ -37,8 +40,6 @@ const C = {
   border: "#EFE5D3",
 };
 
-
-
 interface TestResponse {
   status: string;
   message: string;
@@ -49,37 +50,59 @@ interface TestResponse {
   };
 }
 
-type ConnectionStatus = 'idle' | 'testing' | 'success' | 'error';
-
+type ConnectionStatus = "idle" | "testing" | "success" | "error";
 
 export default function ApiConfigScreen() {
   const [apiUrl, setApiUrl] = useState("");
+  const [secondaryApiUrl, setSecondaryApiUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [savedUrl, setSavedUrl] = useState("");
+  const [savedSecondaryUrl, setSavedSecondaryUrl] = useState("");
   const [status, setStatus] = useState<ConnectionStatus>("idle");
   const [statusMessage, setStatusMessage] = useState("");
+  const [secondaryStatus, setSecondaryStatus] =
+    useState<ConnectionStatus>("idle");
+  const [secondaryStatusMessage, setSecondaryStatusMessage] = useState("");
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
-
 
   const loadSavedUrl = useCallback(async () => {
     try {
       const stored = await AsyncStorage.getItem("api_url");
+      const storedSecondary = await AsyncStorage.getItem("api_url_2");
       if (stored) {
         setSavedUrl(stored);
         setApiUrl(stored);
         setStatus("success");
-        setStatusMessage("✅ URL chargée avec succès");
+        setStatusMessage("✅ URL backend principale chargée avec succès");
       } else {
         setApiUrl("");
         setSavedUrl("");
         setStatus("idle");
-        setStatusMessage("🔌 En attente de configuration");
+        setStatusMessage("🔌 En attente de configuration backend principal");
+      }
+
+      if (storedSecondary) {
+        setSavedSecondaryUrl(storedSecondary);
+        setSecondaryApiUrl(storedSecondary);
+        setSecondaryStatus("success");
+        setSecondaryStatusMessage(
+          "✅ URL backend secondaire chargée avec succès",
+        );
+      } else {
+        setSecondaryApiUrl("");
+        setSavedSecondaryUrl("");
+        setSecondaryStatus("idle");
+        setSecondaryStatusMessage(
+          "🔌 En attente de configuration backend secondaire",
+        );
       }
     } catch (error) {
       console.error("❌ Erreur chargement URL:", error);
       setStatus("error");
       setStatusMessage("❌ Erreur lors du chargement");
+      setSecondaryStatus("error");
+      setSecondaryStatusMessage("❌ Erreur lors du chargement");
     }
   }, []);
 
@@ -94,26 +117,29 @@ export default function ApiConfigScreen() {
     return formatted;
   }, []);
 
-  const testConnection = useCallback(async (url: string): Promise<TestResponse> => {
-    const testUrl = `${url}/api/test`;
-    console.log("🔍 Test de connexion:", testUrl);
-    
-    const response = await fetch(testUrl, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-      },
-    });
+  const testConnection = useCallback(
+    async (url: string): Promise<TestResponse> => {
+      const testUrl = `${url}/api/test`;
+      console.log("🔍 Test de connexion:", testUrl);
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
+      const response = await fetch(testUrl, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+      });
 
-    const data = await response.json();
-    console.log("✅ Données reçues:", data);
-    return data;
-  }, []);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      console.log("✅ Données reçues:", data);
+      return data;
+    },
+    [],
+  );
 
   const handleSave = useCallback(async () => {
     if (!apiUrl || apiUrl.trim() === "") {
@@ -129,39 +155,89 @@ export default function ApiConfigScreen() {
 
     try {
       const data = await testConnection(formattedUrl);
-      
+
       await AsyncStorage.setItem("api_url", formattedUrl);
       setSavedUrl(formattedUrl);
       setStatus("success");
       setStatusMessage("✅ Connexion établie avec succès !");
-      
+
       Alert.alert(
         "✅ Succès",
-        `Connexion établie avec le serveur !\n\n📡 ${data.message || 'Serveur accessible'}\n🕐 ${data.timestamp || ''}`,
-        [{ text: "Continuer", onPress: () => router.replace("/login") }]
+        `Connexion établie avec le serveur principal !\n\n📡 ${data.message || "Serveur accessible"}\n🕐 ${data.timestamp || ""}`,
+        [{ text: "Continuer", onPress: () => router.replace("/login") }],
       );
     } catch (error: any) {
       console.error("❌ Erreur détaillée:", error);
       setStatus("error");
-      setStatusMessage(`❌ ${error.message || 'Erreur de connexion'}`);
-      
+      setStatusMessage(`❌ ${error.message || "Erreur de connexion"}`);
+
       const testUrl = `${formattedUrl}/api/test`;
-      
+
       Alert.alert(
         "❌ Erreur de connexion",
-        `Détails: ${error.message || 'Erreur inconnue'}\n\n` +
-        "💡 Solutions :\n" +
-        "• Vérifiez que le backend est démarré (node server.js)\n" +
-        "• Vérifiez que vous êtes sur le même WiFi\n" +
-        "• Si vous êtes sur émulateur Android, utilisez: http://10.0.2.2:5000\n" +
-        "• Si vous êtes sur émulateur iOS, utilisez: http://localhost:5000\n" +
-        "• Désactivez le firewall Windows\n\n" +
-        `📡 URL testée: ${testUrl}`
+        `Détails: ${error.message || "Erreur inconnue"}\n\n` +
+          "💡 Solutions :\n" +
+          "• Vérifiez que le backend est démarré (node server.js)\n" +
+          "• Vérifiez que vous êtes sur le même WiFi\n" +
+          "• Si vous êtes sur émulateur Android, utilisez: http://10.0.2.2:5000\n" +
+          "• Si vous êtes sur émulateur iOS, utilisez: http://localhost:5000\n" +
+          "• Désactivez le firewall Windows\n\n" +
+          `📡 URL testée: ${testUrl}`,
       );
     } finally {
       setLoading(false);
     }
   }, [apiUrl, formatUrl, testConnection]);
+
+  const handleSaveSecondary = useCallback(async () => {
+    if (!secondaryApiUrl || secondaryApiUrl.trim() === "") {
+      Alert.alert(
+        "Erreur",
+        "Veuillez entrer une URL valide pour le backend secondaire.",
+      );
+      return;
+    }
+
+    const formattedUrl = formatUrl(secondaryApiUrl);
+
+    setLoading(true);
+    setSecondaryStatus("testing");
+    setSecondaryStatusMessage("⏳ Test de connexion en cours...");
+
+    try {
+      const data = await testConnection(formattedUrl);
+
+      await AsyncStorage.setItem("api_url_2", formattedUrl);
+      setSavedSecondaryUrl(formattedUrl);
+      setSecondaryStatus("success");
+      setSecondaryStatusMessage("✅ Connexion établie avec succès !");
+
+      Alert.alert(
+        "✅ Succès",
+        `Connexion établie avec le backend secondaire !\n\n📡 ${data.message || "Serveur accessible"}\n🕐 ${data.timestamp || ""}`,
+      );
+    } catch (error: any) {
+      console.error("❌ Erreur détaillée backend secondaire:", error);
+      setSecondaryStatus("error");
+      setSecondaryStatusMessage(`❌ ${error.message || "Erreur de connexion"}`);
+
+      const testUrl = `${formattedUrl}/api/test`;
+
+      Alert.alert(
+        "❌ Erreur de connexion",
+        `Détails: ${error.message || "Erreur inconnue"}\n\n` +
+          "💡 Solutions :\n" +
+          "• Vérifiez que le backend est démarré\n" +
+          "• Vérifiez que vous êtes sur le même WiFi\n" +
+          "• Si vous êtes sur émulateur Android, utilisez: http://10.0.2.2:4000\n" +
+          "• Si vous êtes sur émulateur iOS, utilisez: http://localhost:4000\n" +
+          "• Désactivez le firewall Windows\n\n" +
+          `📡 URL testée: ${testUrl}`,
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [secondaryApiUrl, formatUrl, testConnection]);
 
   const handleReset = useCallback(async () => {
     Alert.alert(
@@ -186,10 +262,44 @@ export default function ApiConfigScreen() {
             }
           },
         },
-      ]
+      ],
     );
   }, []);
 
+  const handleResetSecondary = useCallback(async () => {
+    Alert.alert(
+      "⚠️ Réinitialisation",
+      "Voulez-vous vraiment supprimer l'URL du backend secondaire ?",
+      [
+        { text: "Annuler", style: "cancel" },
+        {
+          text: "Supprimer",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await AsyncStorage.removeItem("api_url_2");
+              setSavedSecondaryUrl("");
+              setSecondaryApiUrl("");
+              setSecondaryStatus("idle");
+              setSecondaryStatusMessage(
+                "🔌 Configuration backend secondaire réinitialisée",
+              );
+              Alert.alert(
+                "✅ URL supprimée",
+                "L'URL du backend secondaire a été réinitialisée.",
+              );
+            } catch (error) {
+              console.error("❌ Erreur suppression backend secondaire:", error);
+              Alert.alert(
+                "Erreur",
+                "Impossible de supprimer l'URL du backend secondaire.",
+              );
+            }
+          },
+        },
+      ],
+    );
+  }, []);
 
   useEffect(() => {
     loadSavedUrl();
@@ -198,42 +308,75 @@ export default function ApiConfigScreen() {
       duration: 800,
       useNativeDriver: true,
     }).start();
-  }, [loadSavedUrl]);
-
+  }, [loadSavedUrl, fadeAnim]);
 
   const statusColor = useMemo(() => {
-    switch(status) {
-      case "success": return C.green;
-      case "error": return C.red;
-      case "testing": return C.blue;
-      default: return C.inkLight;
+    switch (status) {
+      case "success":
+        return C.green;
+      case "error":
+        return C.red;
+      case "testing":
+        return C.blue;
+      default:
+        return C.inkLight;
     }
   }, [status]);
 
   const statusIcon = useMemo(() => {
-    switch(status) {
-      case "success": return "✅";
-      case "error": return "❌";
-      case "testing": return "⏳";
-      default: return "🔌";
+    switch (status) {
+      case "success":
+        return "✅";
+      case "error":
+        return "❌";
+      case "testing":
+        return "⏳";
+      default:
+        return "🔌";
     }
   }, [status]);
 
-  const isUrlValid = useMemo(() => {
-    return apiUrl && apiUrl.trim().length > 0;
-  }, [apiUrl]);
+  const secondaryStatusColor = useMemo(() => {
+    switch (secondaryStatus) {
+      case "success":
+        return C.green;
+      case "error":
+        return C.red;
+      case "testing":
+        return C.blue;
+      default:
+        return C.inkLight;
+    }
+  }, [secondaryStatus]);
 
+  const secondaryStatusIcon = useMemo(() => {
+    switch (secondaryStatus) {
+      case "success":
+        return "✅";
+      case "error":
+        return "❌";
+      case "testing":
+        return "⏳";
+      default:
+        return "🔌";
+    }
+  }, [secondaryStatus]);
+
+  const isUrlValid = useMemo(() => apiUrl.trim().length > 0, [apiUrl]);
+  const isSecondaryUrlValid = useMemo(
+    () => secondaryApiUrl.trim().length > 0,
+    [secondaryApiUrl],
+  );
 
   return (
     <SafeAreaView style={styles.root}>
-      <Stack.Screen options={{ headerShown: false }} />
       <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
-
       <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.container}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
         <ScrollView
+          style={styles.container}
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
@@ -254,13 +397,16 @@ export default function ApiConfigScreen() {
             <View style={styles.card}>
               <Text style={styles.title}>⚙️ Configuration</Text>
               <Text style={styles.subTitle}>
-                Entrez l'URL du serveur pour connecter l'application
+                Entrez lURL du serveur pour connecter lapplication
               </Text>
 
               {/* Statut */}
-              <View style={[styles.statusContainer, { borderColor: statusColor }]}>
+              <View
+                style={[styles.statusContainer, { borderColor: statusColor }]}
+              >
                 <Text style={[styles.statusText, { color: statusColor }]}>
-                  {statusIcon} {statusMessage || "🔌 En attente de configuration"}
+                  {statusIcon}{" "}
+                  {statusMessage || "🔌 En attente de configuration"}
                 </Text>
               </View>
 
@@ -268,8 +414,13 @@ export default function ApiConfigScreen() {
               {savedUrl !== "" && (
                 <View style={styles.currentUrlContainer}>
                   <View style={styles.currentUrlHeader}>
-                    <Text style={styles.currentUrlLabel}>🔗 URL actuelle :</Text>
-                    <TouchableOpacity onPress={handleReset} style={styles.resetSmallBtn}>
+                    <Text style={styles.currentUrlLabel}>
+                      🔗 URL actuelle :
+                    </Text>
+                    <TouchableOpacity
+                      onPress={handleReset}
+                      style={styles.resetSmallBtn}
+                    >
                       <Text style={styles.resetSmallBtnTxt}>✕</Text>
                     </TouchableOpacity>
                   </View>
@@ -300,7 +451,10 @@ export default function ApiConfigScreen() {
               </View>
 
               <TouchableOpacity
-                style={[styles.testBtn, (!isUrlValid || loading) && styles.testBtnDisabled]}
+                style={[
+                  styles.testBtn,
+                  (!isUrlValid || loading) && styles.testBtnDisabled,
+                ]}
                 onPress={handleSave}
                 disabled={!isUrlValid || loading}
               >
@@ -310,37 +464,106 @@ export default function ApiConfigScreen() {
                     <Text style={styles.testBtnTxt}> Connexion...</Text>
                   </View>
                 ) : (
-                  <Text style={styles.testBtnTxt}>🔗 Tester et sauvegarder</Text>
+                  <Text style={styles.testBtnTxt}>
+                    🔗 Tester et sauvegarder
+                  </Text>
                 )}
               </TouchableOpacity>
 
+              <View style={styles.secondaryCard}>
+                <Text style={styles.secondaryTitle}>🔧 Backend secondaire</Text>
+                <Text style={styles.secondarySubtitle}>
+                  Entrez une URL de secours pour le backend.
+                </Text>
+
+                <View
+                  style={[
+                    styles.statusContainer,
+                    { borderColor: secondaryStatusColor },
+                  ]}
+                >
+                  <Text
+                    style={[styles.statusText, { color: secondaryStatusColor }]}
+                  >
+                    {secondaryStatusIcon}{" "}
+                    {secondaryStatusMessage ||
+                      "🔌 En attente de configuration secondaire"}
+                  </Text>
+                </View>
+
+                {savedSecondaryUrl !== "" && (
+                  <View style={styles.currentUrlContainer}>
+                    <View style={styles.currentUrlHeader}>
+                      <Text style={styles.currentUrlLabel}>
+                        🔗 URL secondaire :
+                      </Text>
+                      <TouchableOpacity
+                        onPress={handleResetSecondary}
+                        style={styles.resetSmallBtn}
+                      >
+                        <Text style={styles.resetSmallBtnTxt}>✕</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <Text style={styles.currentUrlValue}>
+                      {savedSecondaryUrl}
+                    </Text>
+                  </View>
+                )}
+
+                <View style={styles.inputContainer}>
+                  <Text style={styles.inputLabel}>🌐 URL secondaire</Text>
+                  <TextInput
+                    style={[styles.input, loading && styles.inputDisabled]}
+                    placeholder="Ex: 192.168.1.100:4000"
+                    placeholderTextColor={C.inkLight}
+                    value={secondaryApiUrl}
+                    onChangeText={(text) => {
+                      setSecondaryApiUrl(text);
+                      setSecondaryStatus("idle");
+                      setSecondaryStatusMessage(
+                        "🔌 En attente de configuration backend secondaire",
+                      );
+                    }}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="url"
+                    editable={!loading}
+                  />
+                  <Text style={styles.inputHint}>
+                    💡 Format : IP:Port (ex: 192.168.1.100:4000)
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  style={[
+                    styles.testBtn,
+                    (!isSecondaryUrlValid || loading) && styles.testBtnDisabled,
+                  ]}
+                  onPress={handleSaveSecondary}
+                  disabled={!isSecondaryUrlValid || loading}
+                >
+                  <Text style={styles.testBtnTxt}>
+                    🔗 Tester et sauvegarder secondaire
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
               {/* Bouton Réinitialiser */}
-              <TouchableOpacity 
-                style={styles.resetBtn} 
+              <TouchableOpacity
+                style={styles.resetBtn}
                 onPress={handleReset}
                 disabled={loading}
               >
-                <Text style={styles.resetBtnTxt}>🗑️ Réinitialiser l'URL</Text>
+                <Text style={styles.resetBtnTxt}>🗑️ Réinitialiser lURL</Text>
               </TouchableOpacity>
 
-              {/*<View style={styles.infoContainer}>
-                <Text style={styles.infoTitle}>📋 Instructions :</Text>
-                <Text style={styles.infoText}>
-                  1️⃣ Assurez-vous que le backend est démarré
-                </Text>
-                <Text style={styles.infoText}>
-                  2️⃣ Vérifiez que vous êtes sur le même réseau WiFi
-                </Text>
-                <Text style={styles.infoText}>
-                  3️⃣ Entrez l'IP de votre ordinateur + le port (5000)
-                </Text>
-                <Text style={styles.infoText}>
-                  💡 Si vous êtes sur émulateur Android : http://10.0.2.2:5000
-                </Text>
-                <Text style={styles.infoText}>
-                  💡 Si vous êtes sur émulateur iOS : http://localhost:5000
-                </Text>
-              </View>*/}
+              <TouchableOpacity
+                style={[styles.testBtn, loading && styles.testBtnDisabled]}
+                onPress={() => router.push("/PrinterConfigScreen")}
+                disabled={loading}
+              >
+                <Text style={styles.testBtnTxt}>🖨️ Configurer limprimante</Text>
+              </TouchableOpacity>
             </View>
 
             <Text style={styles.version}>Dr. Oetker Vanoise · v1.0</Text>
@@ -350,7 +573,6 @@ export default function ApiConfigScreen() {
     </SafeAreaView>
   );
 }
-
 
 const styles = StyleSheet.create({
   root: {
@@ -490,6 +712,25 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: C.inkLight,
     marginTop: 6,
+  },
+  secondaryCard: {
+    backgroundColor: "#FFF",
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  secondaryTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: C.ink,
+    marginBottom: 6,
+  },
+  secondarySubtitle: {
+    fontSize: 13,
+    color: C.inkLight,
+    marginBottom: 14,
   },
   testBtn: {
     backgroundColor: C.red,

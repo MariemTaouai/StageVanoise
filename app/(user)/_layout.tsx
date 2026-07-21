@@ -5,7 +5,7 @@ export default function UserLayout() {
   return (
     <Stack screenOptions={{ headerShown: false, gestureEnabled: false }}>
       <Stack.Screen 
-        name="index" 
+        name="login" 
         options={{ 
           headerShown: false,
           gestureEnabled: false,

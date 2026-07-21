@@ -57,12 +57,18 @@ const FILTRES = [
   { label: "📤 Exportés", value: "exportes" },
 ];
 
-const ITEMS_PER_PAGE = 4;
+const ITEMS_PER_PAGE = 3;
 const MOIS = [
   "Jan", "Fév", "Mar", "Avr", "Mai", "Jun",
   "Jul", "Aoû", "Sep", "Oct", "Nov", "Déc",
 ];
 
+// ✅ INTERFACE AVEC SOUS-LOTS
+interface SousLotDetail {
+  sousLot: string;
+  quantiteLancee: number;
+  unite: string;
+}
 
 interface Palette {
   id: number;
@@ -82,6 +88,8 @@ interface Palette {
   statut: 'attente' | 'recu' | 'exporte';
   qteUS: number;
   codeArticle: string;
+  sousLots?: SousLotDetail[]; // ✅ AJOUTÉ
+  quantiteTotale?: number; // ✅ AJOUTÉ
 }
 
 interface Stats {
@@ -101,7 +109,6 @@ interface TopArticle {
   name: string;
   count: number;
 }
-
 
 export default function ReceptionScreen() {
   console.log('📥 [ReceptionScreen] Écran RÉCEPTION chargé !');
@@ -136,7 +143,6 @@ export default function ReceptionScreen() {
   const slideAnim = useRef(new Animated.Value(-SIDEBAR_WIDTH)).current;
   const overlayAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
-
 
   const refreshAccessToken = useCallback(async (): Promise<string | null> => {
     try {
@@ -220,7 +226,6 @@ export default function ReceptionScreen() {
     }
   }, [refreshAccessToken, clearTokensAndLogout]);
 
-
   useEffect(() => {
     const checkAccess = async () => {
       try {
@@ -272,7 +277,6 @@ export default function ReceptionScreen() {
     
     checkAccess();
   }, []);
-
 
   const formatDate = useCallback((date: string | null): string | null => {
     if (!date) return null;
@@ -362,7 +366,6 @@ export default function ReceptionScreen() {
     }
   }, []);
 
-
   const fetchPalettes = useCallback(async (url?: string) => {
     const baseUrl = url || apiUrl;
     if (!baseUrl) {
@@ -397,7 +400,6 @@ export default function ReceptionScreen() {
       setLoading(false);
     }
   }, [apiUrl, searchTerm, filtre, fetchWithToken]);
-
 
   const stats = useMemo<Stats>(() => ({
     total: allPalettes.length,
@@ -454,7 +456,6 @@ export default function ReceptionScreen() {
       .map(([name, count]) => ({ name, count }));
   }, [allPalettes]);
 
-
   useEffect(() => {
     const init = async () => {
       try {
@@ -493,7 +494,6 @@ export default function ReceptionScreen() {
     }, [apiUrl, fetchPalettes])
   );
 
-
   useEffect(() => {
     if (apiUrl) {
       fetchPalettes(apiUrl);
@@ -503,7 +503,6 @@ export default function ReceptionScreen() {
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, filtre]);
-
 
   const getPaginatedData = useCallback(() => {
     const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
@@ -520,7 +519,6 @@ export default function ReceptionScreen() {
   const goToNextPage = useCallback(() => {
     if (currentPage < totalPages) setCurrentPage(currentPage + 1);
   }, [currentPage, totalPages]);
-
 
   const openSidebar = useCallback(() => {
     setSidebarOpen(true);
@@ -557,7 +555,6 @@ export default function ReceptionScreen() {
     setRefreshing(false);
   }, [fetchPalettes]);
 
-
   const toggleSelect = useCallback((id: number) => {
     setSelectedIds((prev) =>
       prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
@@ -572,7 +569,6 @@ export default function ReceptionScreen() {
     }
     setSelectAll(!selectAll);
   }, [selectAll, palettes]);
-
 
   const handleMarquerRecus = useCallback(async () => {
     if (!apiUrl) {
@@ -623,7 +619,6 @@ export default function ReceptionScreen() {
       ]
     );
   }, [apiUrl, selectedIds, palettes, fetchWithToken, fetchPalettes]);
-
 
   const generateCSV = useCallback((data: Palette[]): string => {
     const headers = [
@@ -717,7 +712,6 @@ export default function ReceptionScreen() {
     }
   }, [apiUrl, selectedIds, palettes, fetchWithToken, generateCSV]);
 
-
   const handleSendEmail = useCallback(async () => {
     if (!emailDestinataire) {
       Alert.alert("Info", "Veuillez saisir un email destinataire.");
@@ -755,7 +749,6 @@ export default function ReceptionScreen() {
       Alert.alert("Erreur", `Impossible d'envoyer l'email.\n\n${error.message || "Erreur inconnue"}`);
     }
   }, [emailDestinataire, emailCorps, csvFileUri, fetchPalettes]);
-
 
   const lineChartData = useMemo(() => ({
     labels: monthlyData.labels,
@@ -812,7 +805,7 @@ export default function ReceptionScreen() {
     },
   }), []);
 
-
+  // ✅ RENDERITEM CORRIGÉ AVEC SOUS-LOTS REGROUPÉS
   const renderItem = useCallback(({ item }: { item: Palette }) => {
     const isSelected = selectedIds.includes(item.id);
     const statutIcon = getStatutIcon(item.statut);
@@ -821,6 +814,10 @@ export default function ReceptionScreen() {
     const statusDate = getStatusDate(item);
     const statusDateLabel = getStatusDateLabel(item.statut);
     const typeLabel = getTypeLabel(item);
+
+    // ✅ Quantité totale (somme des sous-lots)
+    const totalQty = item.quantiteTotale || item.quantiteLancee || 0;
+    const nbSousLots = item.sousLots?.length || 0;
 
     return (
       <TouchableOpacity
@@ -861,15 +858,15 @@ export default function ReceptionScreen() {
               📅 Expédié: {formatDate(item.date_expedition) || "N/A"}
             </Text>
             <Text style={styles.itemDetail}>
-              📊 Qté: {item.quantiteLancee || 0} {item.unite || "CAR"}
+              📊 Qté totale: {totalQty} {item.unite || "CAR"}
             </Text>
           </View>
 
           <View style={styles.itemDetailsRow}>
             <Text style={styles.itemDetail}>🏷️ Lot: {item.lot || "N/A"}</Text>
-            {item.sousLot && (
-              <Text style={styles.itemDetail}>📎 Sous-lot: {item.sousLot}</Text>
-            )}
+            <Text style={styles.itemDetail}>
+              📎 {nbSousLots} sous-lot{nbSousLots > 1 ? 's' : ''}
+            </Text>
           </View>
 
           <View style={styles.itemDetailsRow}>
@@ -878,6 +875,19 @@ export default function ReceptionScreen() {
               <Text style={styles.itemDetail}>📊 Qté US: {item.qteUS}</Text>
             )}
           </View>
+
+          {/* ✅ SOUS-LOTS REGROUPÉS */}
+          {item.sousLots && item.sousLots.length > 0 && (
+            <View style={styles.sousLotsBlock}>
+              <Text style={styles.sousLotsTitle}>📎 Détail des sous-lots :</Text>
+              {item.sousLots.map((sl, idx) => (
+                <View key={idx} style={styles.sousLotRow}>
+                  <Text style={styles.sousLotName}>{sl.sousLot || "N/A"}</Text>
+                  <Text style={styles.sousLotQty}>{sl.quantiteLancee || 0} {sl.unite || item.unite || "CAR"}</Text>
+                </View>
+              ))}
+            </View>
+          )}
 
           {statusDate && (
             <View style={[styles.statusDateContainer, { backgroundColor: statutBgColor }]}>
@@ -902,7 +912,6 @@ export default function ReceptionScreen() {
     getStatusDate,
     getStatusDateLabel,
   ]);
-
 
   if (isChecking) {
     return (
@@ -1321,7 +1330,6 @@ export default function ReceptionScreen() {
   );
 }
 
-
 const Footer = () => (
   <View style={styles.footer}>
     <View style={styles.footerDivider} />
@@ -1415,6 +1423,36 @@ const styles = StyleSheet.create({
   itemArticle: { fontSize: 14, color: C.ink, fontWeight: "600", marginBottom: 6 },
   itemDetailsRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 3, flexWrap: "wrap" },
   itemDetail: { fontSize: 12, color: C.inkLight },
+  
+  // ✅ STYLES POUR SOUS-LOTS
+  sousLotsBlock: {
+    marginTop: 8,
+    backgroundColor: '#FFF',
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderStyle: 'dashed',
+  },
+  sousLotsTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: C.inkMid,
+    marginBottom: 6,
+    letterSpacing: 0.3,
+  },
+  sousLotRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    backgroundColor: C.surface,
+    borderRadius: 6,
+    marginBottom: 3,
+  },
+  sousLotName: { fontSize: 12, color: C.inkMid, fontWeight: '700' },
+  sousLotQty: { fontSize: 12, color: C.inkLight, fontWeight: '600' },
+  
   statusDateContainer: { marginTop: 8, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, alignSelf: "flex-start" },
   statusDateText: { fontSize: 12, fontWeight: "600" },
   paginationContainer: { flexDirection: "row", alignItems: "center", justifyContent: "center", paddingVertical: 14, marginTop: 6, marginBottom: 10, backgroundColor: C.surface, borderRadius: 14, borderWidth: 1, borderColor: C.border },

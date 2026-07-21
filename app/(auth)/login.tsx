@@ -1,5 +1,5 @@
 // app/(auth)/login.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, SafeAreaView, KeyboardAvoidingView,
@@ -14,6 +14,9 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [apiUrl, setApiUrl] = useState('');
+
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isLongPress = useRef(false);
 
   // ✅ Récupérer l'URL sauvegardée au chargement
   useEffect(() => {
@@ -124,9 +127,7 @@ export default function LoginScreen() {
         data.user.roles = ['User'];
       }
 
-      // ✅ =============================================
-      // ✅ STOCKER LE TOKEN D'ACCÈS (accessToken)
-      // ✅ =============================================
+      // ✅ STOCKER LES TOKENS
       if (data.accessToken) {
         await AsyncStorage.setItem('access_token', data.accessToken);
         console.log('✅ Access token stocké:', data.accessToken.substring(0, 30) + '...');
@@ -137,7 +138,6 @@ export default function LoginScreen() {
         return;
       }
 
-      // ✅ STOCKER LE REFRESH TOKEN
       if (data.refreshToken) {
         await AsyncStorage.setItem('refresh_token', data.refreshToken);
         console.log('✅ Refresh token stocké');
@@ -146,10 +146,9 @@ export default function LoginScreen() {
       }
 
       await AsyncStorage.setItem('user', JSON.stringify(data.user));
-
       await AsyncStorage.setItem('user_roles', JSON.stringify(data.user.roles));
 
-      // ✅ VÉRIFICATION : Lire les tokens stockés
+      // ✅ VÉRIFICATION FINALE
       const savedAccessToken = await AsyncStorage.getItem('access_token');
       const savedRefreshToken = await AsyncStorage.getItem('refresh_token');
       const savedUser = await AsyncStorage.getItem('user');
@@ -177,19 +176,80 @@ export default function LoginScreen() {
     }
   };
 
+  // ✅ GESTION DU LONG PRESS (5 secondes)
+  const handlePressIn = () => {
+    console.log('🖱️ Press IN - Démarrage du timer (5s)');
+    isLongPress.current = false;
+    
+    pressTimer.current = setTimeout(() => {
+      isLongPress.current = true;
+      console.log('⏰ 5 secondes écoulées ! Navigation vers ApiConfigScreen');
+      
+      // Rediriger vers la configuration
+      router.push('/ApiConfigScreen');
+      
+      // Feedback haptique (optionnel)
+      if (Platform.OS === 'ios') {
+        // Tu peux ajouter Vibration si tu veux
+        // Vibration.vibrate(50);
+      }
+    }, 5000); // 5000ms = 5 secondes
+  };
+
+  const handlePressOut = () => {
+    console.log('🖱️ Press OUT - Arrêt du timer');
+    
+    // Annuler le timer si le relâchement est avant 5 secondes
+    if (pressTimer.current) {
+      clearTimeout(pressTimer.current);
+      pressTimer.current = null;
+    }
+    
+    // Si le long press a été déclenché, ne rien faire de plus
+    if (isLongPress.current) {
+      isLongPress.current = false;
+    }
+  };
+
+  // ✅ Nettoyer le timer au démontage du composant
+  useEffect(() => {
+    return () => {
+      if (pressTimer.current) {
+        clearTimeout(pressTimer.current);
+      }
+    };
+  }, []);
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scroll} bounces={false}>
         <View style={styles.header}>
           <View style={styles.logoWrapper}>
-            <Image
-              source={require('../../assets/favicon.png')}
-              style={styles.logo}
-              resizeMode="contain"
-            />
+            {/* ✅ LOGO AVEC LONG PRESS (5 secondes) */}
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPressIn={handlePressIn}
+              onPressOut={handlePressOut}
+              onPress={() => {
+                // ⚠️ Si c'est un simple clic (pas un long press)
+                if (!isLongPress.current) {
+                  console.log('👆 Simple clic sur le logo');
+                  // Optionnel : ouvrir le site web ?
+                  // Linking.openURL('https://vanoiserie.tn/');
+                }
+              }}
+              style={styles.logoPressArea}
+            >
+              <Image
+                source={require('../../assets/favicon.png')}
+                style={styles.logo}
+                resizeMode="contain"
+              />
+            </TouchableOpacity>
           </View>
           <Text style={styles.welcomeTitle}>Bienvenue</Text>
           <Text style={styles.welcomeSub}>Connectez-vous à votre espace</Text>
+          
         </View>
 
         <View style={styles.wave} />
@@ -243,12 +303,7 @@ export default function LoginScreen() {
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.configButton}
-              onPress={() => router.push('/ApiConfigScreen')}
-            >
-              <Text style={styles.configButtonText}>⚙️ Changer l'URL du serveur</Text>
-            </TouchableOpacity>
+          
           </KeyboardAvoidingView>
         </View>
 
@@ -256,7 +311,7 @@ export default function LoginScreen() {
           <Text style={styles.footerText}>
             Pas encore de compte ?{' '}
             <Text style={styles.footerLink} onPress={() => router.push('/(auth)/signup')}>
-              S'inscrire ›
+              Sinscrire ›
             </Text>
           </Text>
           <Text style={styles.copyright}>
@@ -315,12 +370,31 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   logo: { width: 280, height: 120 },
+  
+  // ✅ Nouveau style pour la zone cliquable du logo
+  logoPressArea: {
+    width: 280,
+    height: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+    // Optionnel : un feedback visuel au press
+  },
 
   welcomeTitle: {
     fontSize: 24, fontWeight: '700',
     color: BROWN, marginBottom: 4,
   },
   welcomeSub: { fontSize: 14, color: '#8B6347' },
+
+  // ✅ Indicateur de fonctionnalité cachée
+  hiddenHint: {
+    fontSize: 10,
+    color: '#B89A7A',
+    marginTop: 6,
+    opacity: 0.4,
+    fontStyle: 'italic',
+  },
 
   decorRow: {
     flexDirection: 'row',

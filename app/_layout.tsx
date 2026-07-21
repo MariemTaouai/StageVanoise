@@ -42,6 +42,14 @@ export default function RootLayout() {
             gestureEnabled: false,
           }} 
         />
+        <Stack.Screen 
+          name="PrinterConfigScreen" 
+          options={{ 
+            headerShown: true,
+            title: "Configuration imprimante",
+            gestureEnabled: false,
+          }} 
+        />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>
