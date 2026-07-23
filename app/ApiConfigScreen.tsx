@@ -117,9 +117,17 @@ export default function ApiConfigScreen() {
     return formatted;
   }, []);
 
+  /**
+   * Test de connexion adapté au backend.
+   * - Backend 1 (Express / server.js) : possède une vraie route /api/test
+   * - Backend 2 (LoopBack) : n'a PAS de route /api/test → 404 garanti.
+   *   On teste donc une route qui existe réellement dessus,
+   *   ex: /api/listlocations. Adapte ce endpoint si besoin.
+   */
   const testConnection = useCallback(
-    async (url: string): Promise<TestResponse> => {
-      const testUrl = `${url}/api/test`;
+    async (url: string, isSecondary = false): Promise<TestResponse> => {
+      const endpoint = isSecondary ? "/api/listlocations" : "/api/test";
+      const testUrl = `${url}${endpoint}`;
       console.log("🔍 Test de connexion:", testUrl);
 
       const response = await fetch(testUrl, {
@@ -136,6 +144,17 @@ export default function ApiConfigScreen() {
 
       const data = await response.json();
       console.log("✅ Données reçues:", data);
+
+      // Le backend 2 (LoopBack) ne renvoie pas le même format que
+      // /api/test du backend 1 (Express) : on uniformise la réponse
+      // seulement pour l'affichage du statut dans cet écran.
+      if (isSecondary) {
+        return {
+          status: "success",
+          message: "✅ Backend secondaire accessible (LoopBack)",
+          timestamp: new Date().toISOString(),
+        };
+      }
       return data;
     },
     [],
@@ -154,7 +173,7 @@ export default function ApiConfigScreen() {
     setStatusMessage("⏳ Test de connexion en cours...");
 
     try {
-      const data = await testConnection(formattedUrl);
+      const data = await testConnection(formattedUrl, false);
 
       await AsyncStorage.setItem("api_url", formattedUrl);
       setSavedUrl(formattedUrl);
@@ -205,7 +224,7 @@ export default function ApiConfigScreen() {
     setSecondaryStatusMessage("⏳ Test de connexion en cours...");
 
     try {
-      const data = await testConnection(formattedUrl);
+      const data = await testConnection(formattedUrl, true);
 
       await AsyncStorage.setItem("api_url_2", formattedUrl);
       setSavedSecondaryUrl(formattedUrl);
@@ -221,7 +240,7 @@ export default function ApiConfigScreen() {
       setSecondaryStatus("error");
       setSecondaryStatusMessage(`❌ ${error.message || "Erreur de connexion"}`);
 
-      const testUrl = `${formattedUrl}/api/test`;
+      const testUrl = `${formattedUrl}/api/listlocations`;
 
       Alert.alert(
         "❌ Erreur de connexion",

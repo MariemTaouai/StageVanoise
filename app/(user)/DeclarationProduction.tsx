@@ -23,8 +23,7 @@ import {
   sendToPrinter,
   type ZplData,
 } from "../../Services/printService";
-import { getApiUrl } from "../../Services/apiService";
-
+import { getApiUrl, getConfiguredApiUrl } from "../../Services/apiService";
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const SIDEBAR_WIDTH = 280;
 
@@ -73,13 +72,12 @@ const C = {
   border: "#EFE5D3",
 };
 
-// ✅ Utiliser le fuseau horaire Africa/Tunis (UTC+1)
 const formatDate = (date: string | null): string => {
   if (!date) return "N/A";
   try {
     const dateObj = new Date(date);
     if (isNaN(dateObj.getTime())) return date;
-    
+
     // ✅ Forcer le fuseau horaire Tunisia (UTC+1)
     return dateObj.toLocaleString("fr-FR", {
       day: "2-digit",
@@ -88,7 +86,7 @@ const formatDate = (date: string | null): string => {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,
-      timeZone: "Africa/Tunis", 
+      timeZone: "Africa/Tunis",
     });
   } catch {
     return date;
@@ -108,7 +106,9 @@ export default function ProductionDeclarationScreen() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isPrinting, setIsPrinting] = useState(false);
-  const [activeTab, setActiveTab] = useState<"declaration" | "historique">("declaration");
+  const [activeTab, setActiveTab] = useState<"declaration" | "historique">(
+    "declaration",
+  );
   const [nom, setNom] = useState("");
   const [userRoles, setUserRoles] = useState<string[]>([]);
   const [matricule, setMatricule] = useState("MTR-2026");
@@ -127,26 +127,69 @@ export default function ProductionDeclarationScreen() {
   const [quantiteLancee, setQuantiteLancee] = useState<string>("");
   const [savedQuantiteLancee, setSavedQuantiteLancee] = useState<string>("");
   const [lotGlobal, setLotGlobal] = useState("");
-  const [lignesProduction, setLignesProduction] = useState<ProductionLine[]>([]);
+  const [lignesProduction, setLignesProduction] = useState<ProductionLine[]>(
+    [],
+  );
   const [paletteGeneree, setPaletteGeneree] = useState<string | null>(null);
-  const [dernierePaletteLignes, setDernierePaletteLignes] = useState<ProductionLine[]>([]);
-  const [quantiteLanceeUVCResult, setQuantiteLanceeUVCResult] = useState<number | null>(null);
+  const [dernierePaletteLignes, setDernierePaletteLignes] = useState<
+    ProductionLine[]
+  >([]);
+  const [quantiteLanceeUVCResult, setQuantiteLanceeUVCResult] = useState<
+    number | null
+  >(null);
   const slideAnim = useRef(new Animated.Value(-SIDEBAR_WIDTH)).current;
   const overlayAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
+  const getActiveApiUrl = async (): Promise<string> => {
+    try {
+      return await getApiUrl(true);
+    } catch {
+      return await getConfiguredApiUrl();
+    }
+  };
+
+  const normalizeOfResponse = (data: any[]): ArticleOF[] => {
+    if (!Array.isArray(data)) return [];
+
+    return data
+      .map((item) => {
+        if (item && typeof item === "object" && "numOF" in item) {
+          return item as ArticleOF;
+        }
+
+        const lignes = Array.isArray(item?.lignes) ? item.lignes : [];
+        const firstLine = lignes[0] || {};
+        const totalQty = lignes.reduce((sum: number, line: any) => {
+          const qty = Number(line?.ZEXTQTY || 0);
+          return sum + (Number.isFinite(qty) ? qty : 0);
+        }, 0);
+
+        return {
+          numOF: item?.id || item?.numOF || "",
+          codeArticle: firstLine?.ZITMREF || item?.ZROU || "",
+          quantiteLancee: totalQty,
+          statut: item?.ZSTAT || "",
+          designation: firstLine?.ZITMDES || "",
+          unite: firstLine?.ZUOM || "KG",
+          coefUS: 1,
+        } as ArticleOF;
+      })
+      .filter((item) => item.numOF);
+  };
+
   const fetchWithToken = async (url: string, options: RequestInit = {}) => {
     try {
-      const token = await AsyncStorage.getItem('access_token');
+      const token = await AsyncStorage.getItem("access_token");
       if (!token) {
         const newToken = await refreshAccessToken();
-        if (!newToken) throw new Error('Session expirée');
+        if (!newToken) throw new Error("Session expirée");
       }
 
-      const finalToken = await AsyncStorage.getItem('access_token');
+      const finalToken = await AsyncStorage.getItem("access_token");
       const headers = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${finalToken}`,
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${finalToken}`,
         ...options.headers,
       };
 
@@ -156,82 +199,88 @@ export default function ProductionDeclarationScreen() {
         const newToken = await refreshAccessToken();
         if (newToken) {
           const retryHeaders = {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${newToken}`,
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${newToken}`,
             ...options.headers,
           };
           response = await fetch(url, { ...options, headers: retryHeaders });
         } else {
           await clearTokensAndLogout();
-          throw new Error('Session expirée');
+          throw new Error("Session expirée");
         }
       }
 
       return response;
     } catch (error) {
-      console.error('❌ Erreur fetchWithToken:', error);
+      console.error("❌ Erreur fetchWithToken:", error);
       throw error;
     }
   };
 
   const refreshAccessToken = async (): Promise<string | null> => {
     try {
-      const refreshToken = await AsyncStorage.getItem('refresh_token');
+      const refreshToken = await AsyncStorage.getItem("refresh_token");
       if (!refreshToken) return null;
 
-      const url = await getApiUrl();
+      const url = await getActiveApiUrl();
       const response = await fetch(`${url}/refresh-token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refreshToken }),
       });
 
       const data = await response.json();
       if (response.ok && data.accessToken) {
-        await AsyncStorage.setItem('access_token', data.accessToken);
+        await AsyncStorage.setItem("access_token", data.accessToken);
         return data.accessToken;
       }
       return null;
     } catch (error) {
-      console.error('❌ Erreur refresh:', error);
+      console.error("❌ Erreur refresh:", error);
       return null;
     }
   };
 
   const clearTokensAndLogout = async () => {
     try {
-      const refreshToken = await AsyncStorage.getItem('refresh_token');
-      const url = await getApiUrl();
+      const refreshToken = await AsyncStorage.getItem("refresh_token");
+      const url = await getActiveApiUrl();
       if (refreshToken) {
         await fetch(`${url}/logout`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ refreshToken }),
         });
       }
-      await AsyncStorage.multiRemove(['access_token', 'refresh_token', 'user', 'user_roles', 'selected_role']);
-      router.replace('/(auth)/login');
+      await AsyncStorage.multiRemove([
+        "access_token",
+        "refresh_token",
+        "user",
+        "user_roles",
+        "selected_role",
+      ]);
+      router.replace("/(auth)/login");
     } catch (error) {
-      console.error('❌ Erreur logout:', error);
-      router.replace('/(auth)/login');
+      console.error("❌ Erreur logout:", error);
+      router.replace("/(auth)/login");
     }
   };
 
   useEffect(() => {
     const checkAccess = async () => {
       try {
-        const accessToken = await AsyncStorage.getItem('access_token');
+        const accessToken = await AsyncStorage.getItem("access_token");
         if (!accessToken) {
-          Alert.alert('⛔ Non authentifié', 'Veuillez vous reconnecter.');
-          router.replace('/(auth)/login');
+          Alert.alert("⛔ Non authentifié", "Veuillez vous reconnecter.");
+          router.replace("/(auth)/login");
           setIsChecking(false);
           return;
         }
 
-        const roles = await AsyncStorage.getItem('user_roles');
+        const roles = await AsyncStorage.getItem("user_roles");
         if (!roles) {
-          Alert.alert('⛔ Accès refusé', 'Vous n\'avez pas les droits.');
-          router.replace('/(auth)/login');
+          Alert.alert("⛔ Accès refusé", "Vous n'avez pas les droits.");
+          router.replace("/(auth)/login");
           setIsChecking(false);
           return;
         }
@@ -240,12 +289,15 @@ export default function ProductionDeclarationScreen() {
         setUserRoles(userRoles);
 
         const hasAccess = userRoles.some((role: string) =>
-          ['Production Controller', 'Admin'].includes(role)
+          ["Production Controller", "Admin"].includes(role),
         );
 
         if (!hasAccess) {
-          Alert.alert('⛔ Accès refusé', 'Vous n\'avez pas les droits pour accéder à cette page.');
-          router.replace('/(auth)/login');
+          Alert.alert(
+            "⛔ Accès refusé",
+            "Vous n'avez pas les droits pour accéder à cette page.",
+          );
+          router.replace("/(auth)/login");
           setIsChecking(false);
           return;
         }
@@ -253,8 +305,8 @@ export default function ProductionDeclarationScreen() {
         setIsAuthorized(true);
         await loadData();
       } catch (error) {
-        console.error('❌ Erreur vérification:', error);
-        router.replace('/(auth)/login');
+        console.error("❌ Erreur vérification:", error);
+        router.replace("/(auth)/login");
       } finally {
         setIsChecking(false);
       }
@@ -264,7 +316,7 @@ export default function ProductionDeclarationScreen() {
 
   const loadData = async () => {
     try {
-      const url = await getApiUrl();
+      const url = await getActiveApiUrl();
       setApiUrl(url);
 
       try {
@@ -287,7 +339,7 @@ export default function ProductionDeclarationScreen() {
         if (parsedUser.matricule) setMatricule(parsedUser.matricule);
       }
     } catch (error) {
-      console.error('❌ Erreur chargement:', error);
+      console.error("❌ Erreur chargement:", error);
       router.replace("/ApiConfigScreen");
     }
   };
@@ -296,15 +348,33 @@ export default function ProductionDeclarationScreen() {
   const openSidebar = () => {
     setSidebarOpen(true);
     Animated.parallel([
-      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 100, friction: 14 }),
-      Animated.timing(overlayAnim, { toValue: 1, duration: 250, useNativeDriver: true }),
+      Animated.spring(slideAnim, {
+        toValue: 0,
+        useNativeDriver: true,
+        tension: 100,
+        friction: 14,
+      }),
+      Animated.timing(overlayAnim, {
+        toValue: 1,
+        duration: 250,
+        useNativeDriver: true,
+      }),
     ]).start();
   };
 
   const closeSidebar = () => {
     Animated.parallel([
-      Animated.spring(slideAnim, { toValue: -SIDEBAR_WIDTH, useNativeDriver: true, tension: 100, friction: 14 }),
-      Animated.timing(overlayAnim, { toValue: 0, duration: 200, useNativeDriver: true }),
+      Animated.spring(slideAnim, {
+        toValue: -SIDEBAR_WIDTH,
+        useNativeDriver: true,
+        tension: 100,
+        friction: 14,
+      }),
+      Animated.timing(overlayAnim, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }),
     ]).start(() => setSidebarOpen(false));
   };
 
@@ -314,8 +384,8 @@ export default function ProductionDeclarationScreen() {
   };
 
   const switchRole = async () => {
-    await AsyncStorage.removeItem('selected_role');
-    router.replace('/(auth)/RoleSelectionScreen');
+    await AsyncStorage.removeItem("selected_role");
+    router.replace("/(auth)/RoleSelectionScreen");
   };
 
   // ── FETCH DONNÉES ──
@@ -332,8 +402,8 @@ export default function ProductionDeclarationScreen() {
       }
     } catch (e: any) {
       console.error("❌ Erreur historique:", e);
-      if (e.message?.includes('Session expirée')) {
-        Alert.alert('⏳ Session expirée', 'Veuillez vous reconnecter.');
+      if (e.message?.includes("Session expirée")) {
+        Alert.alert("⏳ Session expirée", "Veuillez vous reconnecter.");
         await clearTokensAndLogout();
       }
     } finally {
@@ -367,17 +437,18 @@ export default function ProductionDeclarationScreen() {
     if (!apiUrl) return;
     const fetchOFs = async () => {
       try {
-        const url = `${apiUrl}/api/production/of?search=${encodeURIComponent(searchText)}`;
+        const url = `${apiUrl}/api/OFMLIGNEs?search=${encodeURIComponent(searchText)}`;
         const response = await fetchWithToken(url);
         if (response.ok) {
-          const data: ArticleOF[] = await response.json();
-          console.log('📋 OFs reçus:', data);
-          setOrdresFabrication(data);
+          const data = await response.json();
+          const normalizedOfs = normalizeOfResponse(data);
+          console.log("📋 OFs reçus:", normalizedOfs);
+          setOrdresFabrication(normalizedOfs);
         }
       } catch (e: any) {
         console.error("❌ Erreur OF:", e);
-        if (e.message?.includes('Session expirée')) {
-          Alert.alert('⏳ Session expirée', 'Veuillez vous reconnecter.');
+        if (e.message?.includes("Session expirée")) {
+          Alert.alert("⏳ Session expirée", "Veuillez vous reconnecter.");
           await clearTokensAndLogout();
         }
       } finally {
@@ -391,17 +462,33 @@ export default function ProductionDeclarationScreen() {
   // ── GESTION PALETTE ──
   const ajouterLigne = () => {
     setPaletteGeneree(null);
-    setLignesProduction([...lignesProduction, { id: Math.random().toString(), slot: "", quantite: "" }]);
+    setLignesProduction([
+      ...lignesProduction,
+      { id: Math.random().toString(), slot: "", quantite: "" },
+    ]);
   };
 
-  const updateLigne = (id: string, champ: keyof ProductionLine, valeur: string) =>
-    setLignesProduction(lignesProduction.map((l) => l.id === id ? { ...l, [champ]: valeur } : l));
+  const updateLigne = (
+    id: string,
+    champ: keyof ProductionLine,
+    valeur: string,
+  ) =>
+    setLignesProduction(
+      lignesProduction.map((l) =>
+        l.id === id ? { ...l, [champ]: valeur } : l,
+      ),
+    );
 
   const supprimerLigne = (id: string) =>
     setLignesProduction(lignesProduction.filter((l) => l.id !== id));
 
   const validerDeclaration = async () => {
-    if (!apiUrl || !selectedOFData || !lotGlobal || lignesProduction.length === 0) {
+    if (
+      !apiUrl ||
+      !selectedOFData ||
+      !lotGlobal ||
+      lignesProduction.length === 0
+    ) {
       Alert.alert("Erreur", "Veuillez remplir tous les champs.");
       return;
     }
@@ -421,18 +508,22 @@ export default function ProductionDeclarationScreen() {
         })),
       };
 
-      console.log('📤 Payload:', JSON.stringify(payload, null, 2));
+      console.log("📤 Payload:", JSON.stringify(payload, null, 2));
 
-      const response = await fetchWithToken(`${apiUrl}/api/production/declarer`, {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
+      const response = await fetchWithToken(
+        `${apiUrl}/api/production/declarer`,
+        {
+          method: "POST",
+          body: JSON.stringify(payload),
+        },
+      );
 
       const result = await response.json();
 
       if (response.ok) {
         const codeGenere: string = result.code;
-        if (!codeGenere) throw new Error("Le serveur n'a pas retourné de code.");
+        if (!codeGenere)
+          throw new Error("Le serveur n'a pas retourné de code.");
 
         if (result.type === "S" || result.type === "P") {
           setModeProduction(result.type as "S" | "P");
@@ -443,9 +534,12 @@ export default function ProductionDeclarationScreen() {
         setPaletteGeneree(codeGenere);
         setQuantiteLanceeUVCResult(result.quantiteLanceeUVC ?? null);
 
-        Alert.alert("Succès", result.type === "P"
-          ? `📦 Palette : ${codeGenere}`
-          : `📋 Code Déclaration : ${codeGenere}`);
+        Alert.alert(
+          "Succès",
+          result.type === "P"
+            ? `📦 Palette : ${codeGenere}`
+            : `📋 Code Déclaration : ${codeGenere}`,
+        );
 
         setLignesProduction([]);
         setQuantiteLancee("");
@@ -454,7 +548,7 @@ export default function ProductionDeclarationScreen() {
       }
     } catch (error: any) {
       Alert.alert("Erreur", error.message);
-      if (error.message?.includes('Session expirée')) {
+      if (error.message?.includes("Session expirée")) {
         await clearTokensAndLogout();
       }
     } finally {
@@ -464,10 +558,17 @@ export default function ProductionDeclarationScreen() {
 
   const buildLabelData = (): ZplData => {
     const coef = selectedOFData?.coefUS || 1;
-    const qtyLancee = savedQuantiteLancee || String(selectedOFData?.quantiteLancee || "0");
+    const qtyLancee =
+      savedQuantiteLancee || String(selectedOFData?.quantiteLancee || "0");
     const qtyLanceeBrute = parseFloat(qtyLancee.replace(",", ".")) || 0;
-    const qtyLanceeUVC = modeProduction === "S" ? parseFloat((qtyLanceeBrute * coef).toFixed(2)) : undefined;
-    const lines = dernierePaletteLignes.length > 0 ? dernierePaletteLignes : lignesProduction;
+    const qtyLanceeUVC =
+      modeProduction === "S"
+        ? parseFloat((qtyLanceeBrute * coef).toFixed(2))
+        : undefined;
+    const lines =
+      dernierePaletteLignes.length > 0
+        ? dernierePaletteLignes
+        : lignesProduction;
 
     return {
       type: modeProduction,
@@ -479,12 +580,16 @@ export default function ProductionDeclarationScreen() {
       quantiteLancee: qtyLancee,
       quantiteLanceeUVC: qtyLanceeUVC,
       lignes: lines.map((l) => {
-        const qtyBrute = parseFloat(String(l.quantite || 0).replace(",", ".")) || 0;
+        const qtyBrute =
+          parseFloat(String(l.quantite || 0).replace(",", ".")) || 0;
         return {
           slot: l.slot,
           qty: qtyBrute,
           LOT: lotGlobal,
-          qteUVC: modeProduction === "S" ? parseFloat((qtyBrute * coef).toFixed(2)) : undefined,
+          qteUVC:
+            modeProduction === "S"
+              ? parseFloat((qtyBrute * coef).toFixed(2))
+              : undefined,
         };
       }),
     };
@@ -520,9 +625,11 @@ export default function ProductionDeclarationScreen() {
   // ✅ LOADER
   if (isChecking) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
         <ActivityIndicator size="large" color={C.red} />
-        <Text style={{ marginTop: 10, color: C.inkLight }}>Vérification des droits...</Text>
+        <Text style={{ marginTop: 10, color: C.inkLight }}>
+          Vérification des droits...
+        </Text>
       </View>
     );
   }
@@ -540,12 +647,18 @@ export default function ProductionDeclarationScreen() {
         </TouchableOpacity>
         <View style={s.centerTitleContainer}>
           <Text style={s.topbarTitle}>
-            {activeTab === "declaration" ? "DÉCLARATION PRODUCTION" : "HISTORIQUE DES PALETTES"}
+            {activeTab === "declaration"
+              ? "DÉCLARATION PRODUCTION"
+              : "HISTORIQUE DES PALETTES"}
           </Text>
           <Text style={s.topbarSubTitle}>Dr. Oetker · Vanoise App</Text>
         </View>
         <View style={s.logoWrap}>
-          <Image source={require("../../assets/favicon.png")} style={s.logo} resizeMode="contain" />
+          <Image
+            source={require("../../assets/favicon.png")}
+            style={s.logo}
+            resizeMode="contain"
+          />
         </View>
       </View>
       <View style={s.redRule} />
@@ -569,11 +682,23 @@ export default function ProductionDeclarationScreen() {
             {activeTab === "declaration" && (
               <View>
                 {/* Header avec date et mode */}
-                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: 20,
+                  }}
+                >
                   <View style={s.dateChip}>
                     <Text style={s.dateTxt}>{today}</Text>
                   </View>
-                  <View style={[s.modeBadge, modeProduction === "P" ? s.modeBadgeP : s.modeBadgeS]}>
+                  <View
+                    style={[
+                      s.modeBadge,
+                      modeProduction === "P" ? s.modeBadgeP : s.modeBadgeS,
+                    ]}
+                  >
                     <Text style={s.modeBadgeTxt}>
                       {modeProduction === "P" ? "👷 Prestataire" : "🏭 Salarié"}
                     </Text>
@@ -582,11 +707,16 @@ export default function ProductionDeclarationScreen() {
 
                 {/* Switch role si plusieurs rôles */}
                 {userRoles.length > 1 && (
-                  <TouchableOpacity style={s.switchRoleButton} onPress={switchRole}>
+                  <TouchableOpacity
+                    style={s.switchRoleButton}
+                    onPress={switchRole}
+                  >
                     <Text style={s.switchRoleIcon}>🔄</Text>
                     <View style={s.switchRoleContent}>
                       <Text style={s.switchRoleTitle}>Changer de rôle</Text>
-                      <Text style={s.switchRoleSubtitle}>Vos rôles: {userRoles.join(', ')}</Text>
+                      <Text style={s.switchRoleSubtitle}>
+                        Vos rôles: {userRoles.join(", ")}
+                      </Text>
                     </View>
                     <Text style={s.switchRoleArrow}>›</Text>
                   </TouchableOpacity>
@@ -595,7 +725,9 @@ export default function ProductionDeclarationScreen() {
                 {/* OF Selection */}
                 <Divider label="ORDRE DE FABRICATION" />
                 <View style={s.pickerCard}>
-                  <Text style={s.inputLabel}>Rechercher et Sélectionner lOF</Text>
+                  <Text style={s.inputLabel}>
+                    Rechercher et Sélectionner lOF
+                  </Text>
                   <TextInput
                     style={s.input}
                     placeholder="Tapez pour filtrer (Ex: OF-2026...)"
@@ -614,7 +746,10 @@ export default function ProductionDeclarationScreen() {
 
                   {showDropdown && ordresFabrication.length > 0 && (
                     <View style={s.dropdownContainer}>
-                      <ScrollView nestedScrollEnabled style={{ maxHeight: 150 }}>
+                      <ScrollView
+                        nestedScrollEnabled
+                        style={{ maxHeight: 150 }}
+                      >
                         {ordresFabrication.map((of) => (
                           <TouchableOpacity
                             key={of.numOF}
@@ -624,15 +759,13 @@ export default function ProductionDeclarationScreen() {
                               setSelectedOFData(of);
                               setSearchText(`${of.numOF} `);
                               setQuantiteLancee(String(of.quantiteLancee));
-                              setQuantiteLanceeUVCResult(of.quantiteLancee * (of.coefUS || 1));
+                              setQuantiteLanceeUVCResult(
+                                of.quantiteLancee * (of.coefUS || 1),
+                              );
                               setShowDropdown(false);
                             }}
                           >
-                            <Text style={s.dropdownItemTxt}>
-                              {of.numOF} 
-                              
-                             
-                            </Text>
+                            <Text style={s.dropdownItemTxt}>{of.numOF}</Text>
                           </TouchableOpacity>
                         ))}
                       </ScrollView>
@@ -641,32 +774,58 @@ export default function ProductionDeclarationScreen() {
 
                   {selectedOFData && (
                     <View style={s.infoArticleBadge}>
-                      <Text style={[s.infoArticleTxt, { fontSize: 16, fontWeight: "800", color: C.red }]}>
+                      <Text
+                        style={[
+                          s.infoArticleTxt,
+                          { fontSize: 16, fontWeight: "800", color: C.red },
+                        ]}
+                      >
                         📋 {selectedOFData.numOF}
                       </Text>
                       <Text style={s.infoArticleTxt}>
-                        <Text style={{ fontWeight: "700" }}>📦 Article :</Text> {selectedOFData.codeArticle ? `${selectedOFData.codeArticle} - ${selectedOFData.designation}` : selectedOFData.designation}
+                        <Text style={{ fontWeight: "700" }}>📦 Article :</Text>{" "}
+                        {selectedOFData.codeArticle
+                          ? `${selectedOFData.codeArticle} - ${selectedOFData.designation}`
+                          : selectedOFData.designation}
                       </Text>
                       <Text style={s.infoArticleTxt}>
-                        <Text style={{ fontWeight: "700" }}>📏 Unité :</Text> {selectedOFData.unite || "CAR"}
+                        <Text style={{ fontWeight: "700" }}>📏 Unité :</Text>{" "}
+                        {selectedOFData.unite || "CAR"}
                       </Text>
                       <Text style={s.infoArticleTxt}>
-                        <Text style={{ fontWeight: "700" }}>📊 Coef US :</Text> {selectedOFData.coefUS}
+                        <Text style={{ fontWeight: "700" }}>📊 Coef US :</Text>{" "}
+                        {selectedOFData.coefUS}
                       </Text>
-                      <Text style={[s.infoArticleTxt, {
-                        color: C.red,
-                        fontSize: 18,
-                        fontWeight: "800",
-                        marginTop: 6,
-                        paddingTop: 6,
-                        borderTopWidth: 1,
-                        borderTopColor: C.border,
-                      }]}>
-                        📊 Quantité Lancée : {selectedOFData.quantiteLancee} {selectedOFData.unite || "CAR"}
+                      <Text
+                        style={[
+                          s.infoArticleTxt,
+                          {
+                            color: C.red,
+                            fontSize: 18,
+                            fontWeight: "800",
+                            marginTop: 6,
+                            paddingTop: 6,
+                            borderTopWidth: 1,
+                            borderTopColor: C.border,
+                          },
+                        ]}
+                      >
+                        📊 Quantité Lancée : {selectedOFData.quantiteLancee}{" "}
+                        {selectedOFData.unite || "CAR"}
                       </Text>
                       {modeProduction === "S" && (
-                        <Text style={[s.infoArticleTxt, { color: C.blue, fontSize: 14 }]}>
-                          → UVC : {(selectedOFData.quantiteLancee * (selectedOFData.coefUS || 1)).toFixed(2)} {selectedOFData.unite || "CAR"}
+                        <Text
+                          style={[
+                            s.infoArticleTxt,
+                            { color: C.blue, fontSize: 14 },
+                          ]}
+                        >
+                          → UVC :{" "}
+                          {(
+                            selectedOFData.quantiteLancee *
+                            (selectedOFData.coefUS || 1)
+                          ).toFixed(2)}{" "}
+                          {selectedOFData.unite || "CAR"}
                         </Text>
                       )}
                     </View>
@@ -674,7 +833,6 @@ export default function ProductionDeclarationScreen() {
                 </View>
 
                 {/* Quantité Lancée - AFFICHAGE AUTO */}
-                
 
                 {/* Lot Global */}
                 <Divider label="IDENTIFICATION DU LOT GLOBAL" />
@@ -684,7 +842,10 @@ export default function ProductionDeclarationScreen() {
                     style={s.input}
                     placeholder="Ex: L2606"
                     value={lotGlobal}
-                    onChangeText={(txt) => { setLotGlobal(txt); setPaletteGeneree(null); }}
+                    onChangeText={(txt) => {
+                      setLotGlobal(txt);
+                      setPaletteGeneree(null);
+                    }}
                   />
                 </View>
 
@@ -697,7 +858,9 @@ export default function ProductionDeclarationScreen() {
                 </View>
 
                 {lignesProduction.length === 0 ? (
-                  <Text style={s.emptyText}>Aucun emplacement saisi. Cliquez sur + Ajouter un sous-lot.</Text>
+                  <Text style={s.emptyText}>
+                    Aucun emplacement saisi. Cliquez sur + Ajouter un sous-lot.
+                  </Text>
                 ) : (
                   lignesProduction.map((ligne, index) => (
                     <View key={ligne.id} style={s.ligneCard}>
@@ -709,50 +872,83 @@ export default function ProductionDeclarationScreen() {
                             style={s.input}
                             placeholder="Ex: A-12, B-04..."
                             value={ligne.slot}
-                            onChangeText={(txt) => updateLigne(ligne.id, "slot", txt)}
+                            onChangeText={(txt) =>
+                              updateLigne(ligne.id, "slot", txt)
+                            }
                           />
                         </View>
                         <TextInput
                           style={s.input}
                           placeholder="Quantité"
                           keyboardType="numeric"
-                          value={ligne.quantite === null || ligne.quantite === undefined ? "" : String(ligne.quantite)}
-                          onChangeText={(txt) => updateLigne(ligne.id, "quantite", txt)}
+                          value={
+                            ligne.quantite === null ||
+                            ligne.quantite === undefined
+                              ? ""
+                              : String(ligne.quantite)
+                          }
+                          onChangeText={(txt) =>
+                            updateLigne(ligne.id, "quantite", txt)
+                          }
                         />
                       </View>
 
-                      {modeProduction === "S" && ligne.quantite !== "" && selectedOFData && (
-                        <Text style={s.uvcPreview}>
-                          → Qte UVC :{" "}
-                          <Text style={{ fontWeight: "700", color: C.blue }}>
-                            {(parseFloat(String(ligne.quantite || 0).replace(",", ".")) * (selectedOFData.coefUS || 1)).toFixed(2)}{" "}
-                            {selectedOFData.unite || "CAR"}
+                      {modeProduction === "S" &&
+                        ligne.quantite !== "" &&
+                        selectedOFData && (
+                          <Text style={s.uvcPreview}>
+                            → Qte UVC :{" "}
+                            <Text style={{ fontWeight: "700", color: C.blue }}>
+                              {(
+                                parseFloat(
+                                  String(ligne.quantite || 0).replace(",", "."),
+                                ) * (selectedOFData.coefUS || 1)
+                              ).toFixed(2)}{" "}
+                              {selectedOFData.unite || "CAR"}
+                            </Text>
                           </Text>
-                        </Text>
-                      )}
+                        )}
 
-                      <TouchableOpacity style={s.deleteBtn} onPress={() => supprimerLigne(ligne.id)}>
-                        <Text style={s.deleteBtnTxt}>Supprimer l&apos;emplacement</Text>
+                      <TouchableOpacity
+                        style={s.deleteBtn}
+                        onPress={() => supprimerLigne(ligne.id)}
+                      >
+                        <Text style={s.deleteBtnTxt}>
+                          Supprimer l&apos;emplacement
+                        </Text>
                       </TouchableOpacity>
                     </View>
                   ))
                 )}
 
-                {modeProduction === "S" && lignesProduction.length > 0 && selectedOFData && (
-                  <View style={s.totalUVCCard}>
-                    <Text style={s.totalUVCLabel}>Σ Total UVC :</Text>
-                    <Text style={s.totalUVCValue}>
-                      {lignesProduction
-                        .reduce((acc, l) => acc + parseFloat(String(l.quantite || 0).replace(",", ".")) * (selectedOFData.coefUS || 1), 0)
-                        .toFixed(2)}{" "}
-                      {selectedOFData.unite || "CAR"}
-                    </Text>
-                  </View>
-                )}
+                {modeProduction === "S" &&
+                  lignesProduction.length > 0 &&
+                  selectedOFData && (
+                    <View style={s.totalUVCCard}>
+                      <Text style={s.totalUVCLabel}>Σ Total UVC :</Text>
+                      <Text style={s.totalUVCValue}>
+                        {lignesProduction
+                          .reduce(
+                            (acc, l) =>
+                              acc +
+                              parseFloat(
+                                String(l.quantite || 0).replace(",", "."),
+                              ) *
+                                (selectedOFData.coefUS || 1),
+                            0,
+                          )
+                          .toFixed(2)}{" "}
+                        {selectedOFData.unite || "CAR"}
+                      </Text>
+                    </View>
+                  )}
 
                 {/* Bouton Enregistrer */}
                 <View style={{ marginTop: 20 }}>
-                  <TouchableOpacity style={s.validerBtn} onPress={validerDeclaration}>
+                  <TouchableOpacity
+                    style={s.validerBtn}
+                    onPress={validerDeclaration}
+                  >
                     <Text style={s.validerBtnTxt}>Enregistrer la Palette</Text>
                   </TouchableOpacity>
                 </View>
@@ -761,23 +957,46 @@ export default function ProductionDeclarationScreen() {
                 {paletteGeneree && (
                   <View style={s.paletteCard}>
                     <Text style={s.paletteLabel}>
-                      {modeProduction === "P" ? "🔖 CODE PRESTATAIRE GÉNÉRÉ (ID) :" : "📦 NUMÉRO DE PALETTE GÉNÉRÉ :"}
+                      {modeProduction === "P"
+                        ? "🔖 CODE PRESTATAIRE GÉNÉRÉ (ID) :"
+                        : "📦 NUMÉRO DE PALETTE GÉNÉRÉ :"}
                     </Text>
                     <Text style={s.paletteCode}>{paletteGeneree}</Text>
-                    <Text style={s.paletteSub}>Lié à l&apos;OF : {selectedOF} · Lot : {lotGlobal}</Text>
-                    {modeProduction === "S" && quantiteLanceeUVCResult !== null && (
-                      <Text style={[s.paletteSub, { color: C.blue, fontWeight: "700", marginTop: 4 }]}>
-                        Qte Lancée UVC : {quantiteLanceeUVCResult.toFixed(2)} CAR
-                      </Text>
-                    )}
+                    <Text style={s.paletteSub}>
+                      Lié à l&apos;OF : {selectedOF} · Lot : {lotGlobal}
+                    </Text>
+                    {modeProduction === "S" &&
+                      quantiteLanceeUVCResult !== null && (
+                        <Text
+                          style={[
+                            s.paletteSub,
+                            { color: C.blue, fontWeight: "700", marginTop: 4 },
+                          ]}
+                        >
+                          Qte Lancée UVC : {quantiteLanceeUVCResult.toFixed(2)}{" "}
+                          CAR
+                        </Text>
+                      )}
                     <View>
-                      <TouchableOpacity style={s.printBtn} onPress={imprimerPalette} disabled={isPrinting}>
+                      <TouchableOpacity
+                        style={s.printBtn}
+                        onPress={imprimerPalette}
+                        disabled={isPrinting}
+                      >
                         <Text style={s.printBtnTxt}>
-                          {isPrinting ? "⏳ En cours..." : "🖨️ Imprimer l'étiquette"}
+                          {isPrinting
+                            ? "⏳ En cours..."
+                            : "🖨️ Imprimer l'étiquette"}
                         </Text>
                       </TouchableOpacity>
-                      <TouchableOpacity style={[s.printBtn, { marginTop: 10 }]} onPress={telechargerPdf} disabled={isPrinting}>
-                        <Text style={s.printBtnTxt}>⬇️ Télécharger l&apos;étiquette PDF</Text>
+                      <TouchableOpacity
+                        style={[s.printBtn, { marginTop: 10 }]}
+                        onPress={telechargerPdf}
+                        disabled={isPrinting}
+                      >
+                        <Text style={s.printBtnTxt}>
+                          ⬇️ Télécharger l&apos;étiquette PDF
+                        </Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -808,7 +1027,10 @@ export default function ProductionDeclarationScreen() {
                     onChangeText={(txt) => setSearchTerm(txt)}
                   />
                   {searchTerm.length > 0 && (
-                    <TouchableOpacity onPress={() => setSearchTerm("")} style={s.clearSearchContainer}>
+                    <TouchableOpacity
+                      onPress={() => setSearchTerm("")}
+                      style={s.clearSearchContainer}
+                    >
                       <Text style={s.clearSearchText}>✕</Text>
                     </TouchableOpacity>
                   )}
@@ -819,33 +1041,56 @@ export default function ProductionDeclarationScreen() {
                     <ActivityIndicator size="small" color={C.red} />
                   </View>
                 ) : historiquePalettes.length === 0 ? (
-                  <Text style={s.emptyText}>Aucune palette trouvée dans l&apos;historique.</Text>
+                  <Text style={s.emptyText}>
+                    Aucune palette trouvée dans l&apos;historique.
+                  </Text>
                 ) : (
                   <>
                     {historiquePalettes.map((pal, idx) => (
                       <View key={idx} style={s.histCard}>
                         <View style={s.histCardHeader}>
-                          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                          <View
+                            style={{
+                              flexDirection: "row",
+                              alignItems: "center",
+                              gap: 8,
+                            }}
+                          >
                             <Text style={s.histPalNum}>{pal.id || "N/A"}</Text>
-                            <View style={[s.modeBadge, pal.type === "P" ? s.modeBadgeP : s.modeBadgeS]}>
+                            <View
+                              style={[
+                                s.modeBadge,
+                                pal.type === "P" ? s.modeBadgeP : s.modeBadgeS,
+                              ]}
+                            >
                               <Text style={s.modeBadgeTxt}>
                                 {pal.type === "P" ? "Prestataire" : "Salarié"}
                               </Text>
                             </View>
                           </View>
                           <Text style={s.histDate}>
-                            {pal.date_production ? formatDate(pal.date_production) : ""}
+                            {pal.date_production
+                              ? formatDate(pal.date_production)
+                              : ""}
                           </Text>
                         </View>
 
                         <View style={{ marginTop: 8 }}>
                           <Text style={[s.histInfo, { marginBottom: 6 }]}>
-                            📦 Article : <Text style={{ fontWeight: "700" }}>{pal.article || "Inconnu"}</Text>
+                            📦 Article :{" "}
+                            <Text style={{ fontWeight: "700" }}>
+                              {pal.article || "Inconnu"}
+                            </Text>
                           </Text>
                           <Text
                             style={[
                               s.histInfo,
-                              { fontWeight: "700", color: C.inkMid, fontSize: 13, marginBottom: 4 },
+                              {
+                                fontWeight: "700",
+                                color: C.inkMid,
+                                fontSize: 13,
+                                marginBottom: 4,
+                              },
                             ]}
                           >
                             📋 Composition de la palette :
@@ -853,94 +1098,142 @@ export default function ProductionDeclarationScreen() {
 
                           {pal.slots && pal.slots.length > 0 ? (
                             (() => {
-                              const slotsByLot: Record<string, any[]> = pal.slots.reduce(
-                                (acc: Record<string, any[]>, s: any) => {
-                                  const lotName = s.lot || "Sans lot";
-                                  if (!acc[lotName]) acc[lotName] = [];
-                                  acc[lotName].push(s);
-                                  return acc;
-                                },
-                                {}
-                              );
-                              return Object.entries(slotsByLot).map(([lotName, slotsArr], lotIdx) => {
-                                const totalQtyLot = slotsArr.reduce(
-                                  (sum: number, s: any) => sum + (parseFloat(s.qty) || 0),
-                                  0
+                              const slotsByLot: Record<string, any[]> =
+                                pal.slots.reduce(
+                                  (acc: Record<string, any[]>, s: any) => {
+                                    const lotName = s.lot || "Sans lot";
+                                    if (!acc[lotName]) acc[lotName] = [];
+                                    acc[lotName].push(s);
+                                    return acc;
+                                  },
+                                  {},
                                 );
+                              return Object.entries(slotsByLot).map(
+                                ([lotName, slotsArr], lotIdx) => {
+                                  const totalQtyLot = slotsArr.reduce(
+                                    (sum: number, s: any) =>
+                                      sum + (parseFloat(s.qty) || 0),
+                                    0,
+                                  );
 
-                                return (
-                                  <View key={lotIdx} style={{ marginTop: 6 }}>
-                                    <Text style={{ fontSize: 13, fontWeight: "700", color: C.red }}>
-                                      🏷️ Lot : {lotName}
-                                    </Text>
-
-                                    {slotsArr.map((es: any, esi: number) => (
-                                      <View
-                                        key={esi}
+                                  return (
+                                    <View key={lotIdx} style={{ marginTop: 6 }}>
+                                      <Text
                                         style={{
-                                          flexDirection: "row",
-                                          justifyContent: "space-between",
-                                          alignItems: "center",
-                                          backgroundColor: C.surface,
-                                          paddingVertical: 6,
-                                          paddingHorizontal: 10,
-                                          borderRadius: 4,
-                                          marginTop: 4,
+                                          fontSize: 13,
+                                          fontWeight: "700",
+                                          color: C.red,
                                         }}
                                       >
-                                        <Text style={{ fontSize: 13, fontWeight: "600" }}>
-                                          📍 Slot : {es.slot || "—"}
-                                        </Text>
-                                        <View style={{ alignItems: "flex-end" }}>
-                                          <Text style={{ fontSize: 12, color: C.inkLight }}>
-                                            Qté : {es.qty}
-                                          </Text>
-                                          {pal.type === "S" && (
-                                            <Text style={{ fontSize: 12, fontWeight: "700", color: C.blue }}>
-                                              UVC : {parseFloat(String(es.qteUS || 0)).toFixed(2)}
-                                            </Text>
-                                          )}
-                                        </View>
-                                      </View>
-                                    ))}
-
-                                    <View
-                                      style={{
-                                        flexDirection: "row",
-                                        justifyContent: "flex-end",
-                                        paddingHorizontal: 10,
-                                        marginTop: 6,
-                                        backgroundColor: "#F5F5F5",
-                                        borderRadius: 4,
-                                        paddingVertical: 4,
-                                      }}
-                                    >
-                                      <Text style={{ fontSize: 12, fontWeight: "700", color: C.ink }}>
-                                        Total lot : {totalQtyLot.toFixed(2)}{" "}
-                                        {pal.slots[0]?.unite || "CAR"}
+                                        🏷️ Lot : {lotName}
                                       </Text>
-                                    </View>
 
-                                    {pal.type === "S" && (
+                                      {slotsArr.map((es: any, esi: number) => (
+                                        <View
+                                          key={esi}
+                                          style={{
+                                            flexDirection: "row",
+                                            justifyContent: "space-between",
+                                            alignItems: "center",
+                                            backgroundColor: C.surface,
+                                            paddingVertical: 6,
+                                            paddingHorizontal: 10,
+                                            borderRadius: 4,
+                                            marginTop: 4,
+                                          }}
+                                        >
+                                          <Text
+                                            style={{
+                                              fontSize: 13,
+                                              fontWeight: "600",
+                                            }}
+                                          >
+                                            📍 Slot : {es.slot || "—"}
+                                          </Text>
+                                          <View
+                                            style={{ alignItems: "flex-end" }}
+                                          >
+                                            <Text
+                                              style={{
+                                                fontSize: 12,
+                                                color: C.inkLight,
+                                              }}
+                                            >
+                                              Qté : {es.qty}
+                                            </Text>
+                                            {pal.type === "S" && (
+                                              <Text
+                                                style={{
+                                                  fontSize: 12,
+                                                  fontWeight: "700",
+                                                  color: C.blue,
+                                                }}
+                                              >
+                                                UVC :{" "}
+                                                {parseFloat(
+                                                  String(es.qteUS || 0),
+                                                ).toFixed(2)}
+                                              </Text>
+                                            )}
+                                          </View>
+                                        </View>
+                                      ))}
+
                                       <View
                                         style={{
                                           flexDirection: "row",
                                           justifyContent: "flex-end",
                                           paddingHorizontal: 10,
-                                          marginTop: 2,
+                                          marginTop: 6,
+                                          backgroundColor: "#F5F5F5",
+                                          borderRadius: 4,
+                                          paddingVertical: 4,
                                         }}
                                       >
-                                        <Text style={{ fontSize: 12, fontWeight: "700", color: C.blue }}>
-                                          Σ UVC lot :{" "}
-                                          {slotsArr
-                                            .reduce((a: number, s: any) => a + (parseFloat(s.qteUS) || 0), 0)
-                                            .toFixed(2)}
+                                        <Text
+                                          style={{
+                                            fontSize: 12,
+                                            fontWeight: "700",
+                                            color: C.ink,
+                                          }}
+                                        >
+                                          Total lot : {totalQtyLot.toFixed(2)}{" "}
+                                          {pal.slots[0]?.unite || "CAR"}
                                         </Text>
                                       </View>
-                                    )}
-                                  </View>
-                                );
-                              });
+
+                                      {pal.type === "S" && (
+                                        <View
+                                          style={{
+                                            flexDirection: "row",
+                                            justifyContent: "flex-end",
+                                            paddingHorizontal: 10,
+                                            marginTop: 2,
+                                          }}
+                                        >
+                                          <Text
+                                            style={{
+                                              fontSize: 12,
+                                              fontWeight: "700",
+                                              color: C.blue,
+                                            }}
+                                          >
+                                            Σ UVC lot :{" "}
+                                            {slotsArr
+                                              .reduce(
+                                                (a: number, s: any) =>
+                                                  a +
+                                                  (parseFloat(s.qteUS) || 0),
+                                                0,
+                                              )
+                                              .toFixed(2)}
+                                          </Text>
+                                        </View>
+                                      )}
+                                    </View>
+                                  );
+                                },
+                              );
                             })()
                           ) : (
                             <Text style={s.histInfo}>Aucun lot associé</Text>
@@ -960,27 +1253,45 @@ export default function ProductionDeclarationScreen() {
                                 borderColor: C.border,
                               }}
                             >
-                              <Text style={{ fontSize: 13, fontWeight: "800", color: C.ink }}>
+                              <Text
+                                style={{
+                                  fontSize: 13,
+                                  fontWeight: "800",
+                                  color: C.ink,
+                                }}
+                              >
                                 Total palette :{" "}
                                 {pal.slots
-                                  .reduce((a: number, s: any) => a + (parseFloat(s.qty) || 0), 0)
+                                  .reduce(
+                                    (a: number, s: any) =>
+                                      a + (parseFloat(s.qty) || 0),
+                                    0,
+                                  )
                                   .toFixed(2)}{" "}
                                 CAR
                               </Text>
                             </View>
                           )}
 
-                          {pal.type === "S" && pal.slots && pal.slots.length > 0 && (
-                            <View style={[s.totalUVCCard, { marginTop: 6 }]}>
-                              <Text style={s.totalUVCLabel}>Σ Total UVC palette :</Text>
-                              <Text style={s.totalUVCValue}>
-                                {pal.slots
-                                  .reduce((a: number, s: any) => a + (parseFloat(s.qteUS) || 0), 0)
-                                  .toFixed(2)}{" "}
-                                CAR
-                              </Text>
-                            </View>
-                          )}
+                          {pal.type === "S" &&
+                            pal.slots &&
+                            pal.slots.length > 0 && (
+                              <View style={[s.totalUVCCard, { marginTop: 6 }]}>
+                                <Text style={s.totalUVCLabel}>
+                                  Σ Total UVC palette :
+                                </Text>
+                                <Text style={s.totalUVCValue}>
+                                  {pal.slots
+                                    .reduce(
+                                      (a: number, s: any) =>
+                                        a + (parseFloat(s.qteUS) || 0),
+                                      0,
+                                    )
+                                    .toFixed(2)}{" "}
+                                  CAR
+                                </Text>
+                              </View>
+                            )}
                         </View>
                       </View>
                     ))}
@@ -991,7 +1302,12 @@ export default function ProductionDeclarationScreen() {
                         onPress={handlePrevPage}
                         disabled={page === 1 || loadingHist}
                       >
-                        <Text style={[s.pagBtnTxt, page === 1 && s.pagBtnTxtDisabled]}>
+                        <Text
+                          style={[
+                            s.pagBtnTxt,
+                            page === 1 && s.pagBtnTxtDisabled,
+                          ]}
+                        >
                           ◀ Précédent
                         </Text>
                       </TouchableOpacity>
@@ -1003,7 +1319,11 @@ export default function ProductionDeclarationScreen() {
                         onPress={handleNextPage}
                         disabled={!hasMore || loadingHist}
                       >
-                        <Text style={[s.pagBtnTxt, !hasMore && s.pagBtnTxtDisabled]}>Suivant ▶</Text>
+                        <Text
+                          style={[s.pagBtnTxt, !hasMore && s.pagBtnTxtDisabled]}
+                        >
+                          Suivant ▶
+                        </Text>
                       </TouchableOpacity>
                     </View>
                   </>
@@ -1016,7 +1336,10 @@ export default function ProductionDeclarationScreen() {
               <View style={s.footerDivider} />
               <Text style={s.copyright}>
                 © 2026{" "}
-                <Text style={s.copyrightLink} onPress={() => Linking.openURL("https://vanoiserie.tn/")}>
+                <Text
+                  style={s.copyrightLink}
+                  onPress={() => Linking.openURL("https://vanoiserie.tn/")}
+                >
                   Dr. Oetker Vanoise
                 </Text>{" "}
                 Tous droits réservés.
@@ -1029,20 +1352,31 @@ export default function ProductionDeclarationScreen() {
       {/* Sidebar */}
       {sidebarOpen && (
         <Animated.View style={[s.overlay, { opacity: overlayAnim }]}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={closeSidebar} />
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            onPress={closeSidebar}
+          />
         </Animated.View>
       )}
 
-      <Animated.View style={[s.sidebar, { transform: [{ translateX: slideAnim }] }]}>
+      <Animated.View
+        style={[s.sidebar, { transform: [{ translateX: slideAnim }] }]}
+      >
         <View style={sb.stripe} />
         <View style={sb.logoBlock}>
-          <Image source={require("../../assets/favicon.png")} style={sb.logoImg} resizeMode="contain" />
+          <Image
+            source={require("../../assets/favicon.png")}
+            style={sb.logoImg}
+            resizeMode="contain"
+          />
           <Text style={sb.brand}>DR. OETKER</Text>
           <Text style={sb.brandSub}>VANOISE PORTAL</Text>
         </View>
         <View style={sb.header}>
           <View style={sb.avatarLg}>
-            <Text style={sb.avatarLgTxt}>{nom ? nom[0].toUpperCase() : "O"}</Text>
+            <Text style={sb.avatarLgTxt}>
+              {nom ? nom[0].toUpperCase() : "O"}
+            </Text>
           </View>
           <View>
             <Text style={sb.name}>{nom || "Opérateur"}</Text>
@@ -1052,20 +1386,43 @@ export default function ProductionDeclarationScreen() {
         <View style={sb.sep} />
         <View style={sb.section}>
           <Text style={sb.sectionLabel}>NAVIGATION</Text>
-          <TouchableOpacity style={[sb.item, activeTab === "declaration" && sb.itemActive]} onPress={() => { setActiveTab("declaration"); closeSidebar(); }}>
+          <TouchableOpacity
+            style={[sb.item, activeTab === "declaration" && sb.itemActive]}
+            onPress={() => {
+              setActiveTab("declaration");
+              closeSidebar();
+            }}
+          >
             <Text style={sb.itemIcon}>📦</Text>
-            <Text style={[sb.itemLabel, activeTab === "declaration" && sb.itemLabelActive]}>Déclaration Prod.</Text>
+            <Text
+              style={[
+                sb.itemLabel,
+                activeTab === "declaration" && sb.itemLabelActive,
+              ]}
+            >
+              Déclaration Prod.
+            </Text>
             {activeTab === "declaration" && <View style={sb.pip} />}
           </TouchableOpacity>
-          <TouchableOpacity style={[sb.item, activeTab === "historique" && sb.itemActive]} onPress={() => { setActiveTab("historique"); closeSidebar(); }}>
+          <TouchableOpacity
+            style={[sb.item, activeTab === "historique" && sb.itemActive]}
+            onPress={() => {
+              setActiveTab("historique");
+              closeSidebar();
+            }}
+          >
             <Text style={sb.itemIcon}>📜</Text>
-            <Text style={[sb.itemLabel, activeTab === "historique" && sb.itemLabelActive]}>Historique</Text>
+            <Text
+              style={[
+                sb.itemLabel,
+                activeTab === "historique" && sb.itemLabelActive,
+              ]}
+            >
+              Historique
+            </Text>
             {activeTab === "historique" && <View style={sb.pip} />}
           </TouchableOpacity>
-          <TouchableOpacity style={sb.item} onPress={() => { closeSidebar(); router.push("/ApiConfigScreen"); }}>
-            <Text style={sb.itemIcon}>⚙️</Text>
-            <Text style={sb.itemLabel}>Configuration serveur</Text>
-          </TouchableOpacity>
+       
           {userRoles.length > 1 && (
             <TouchableOpacity style={sb.switchRoleItem} onPress={switchRole}>
               <Text style={sb.itemIcon}>🔄</Text>
@@ -1108,7 +1465,12 @@ const s = StyleSheet.create({
   },
   hamburgerIcon: { color: C.inkMid, fontSize: 20, fontWeight: "bold" },
   centerTitleContainer: { alignItems: "center" },
-  topbarTitle: { fontSize: 13, fontWeight: "800", color: C.inkMid, letterSpacing: 0.5 },
+  topbarTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: C.inkMid,
+    letterSpacing: 0.5,
+  },
   topbarSubTitle: { fontSize: 11, color: C.inkLight, marginTop: 1 },
   logoWrap: {
     width: 44,
@@ -1124,9 +1486,19 @@ const s = StyleSheet.create({
   redRule: { height: 3, backgroundColor: C.red },
   scroll: { padding: 20 },
 
-  loadWrap: { alignItems: "center", justifyContent: "center", paddingTop: 120, gap: 16 },
+  loadWrap: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingTop: 120,
+    gap: 16,
+  },
   loadLogo: { width: 90, height: 60 },
-  loadTxt: { color: C.inkMid, fontSize: 14, fontWeight: "600", letterSpacing: 0.3 },
+  loadTxt: {
+    color: C.inkMid,
+    fontSize: 14,
+    fontWeight: "600",
+    letterSpacing: 0.3,
+  },
 
   dateChip: {
     alignSelf: "flex-start",
@@ -1189,7 +1561,12 @@ const s = StyleSheet.create({
     padding: 14,
     marginBottom: 20,
   },
-  inputLabel: { fontSize: 12, fontWeight: "700", color: C.inkMid, marginBottom: 8 },
+  inputLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.inkMid,
+    marginBottom: 8,
+  },
   dropdownContainer: {
     backgroundColor: "#FFF",
     borderRadius: 8,
@@ -1198,7 +1575,11 @@ const s = StyleSheet.create({
     borderColor: C.border,
     overflow: "hidden",
   },
-  dropdownItem: { padding: 12, borderBottomWidth: 1, borderBottomColor: C.surface },
+  dropdownItem: {
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: C.surface,
+  },
   dropdownItemTxt: { color: C.ink, fontSize: 13, fontWeight: "600" },
 
   infoArticleBadge: {
@@ -1219,9 +1600,19 @@ const s = StyleSheet.create({
     marginTop: 10,
   },
   sectionTitle: { fontSize: 16, fontWeight: "800", color: C.inkMid },
-  addButton: { backgroundColor: C.green, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
+  addButton: {
+    backgroundColor: C.green,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
   addButtonText: { color: "#FFF", fontWeight: "700", fontSize: 12 },
-  emptyText: { textAlign: "center", color: C.inkLight, fontStyle: "italic", marginVertical: 30 },
+  emptyText: {
+    textAlign: "center",
+    color: C.inkLight,
+    fontStyle: "italic",
+    marginVertical: 30,
+  },
 
   ligneCard: {
     backgroundColor: C.surface,
@@ -1233,10 +1624,20 @@ const s = StyleSheet.create({
     borderLeftWidth: 4,
     borderLeftColor: C.cream,
   },
-  ligneIndex: { fontSize: 11, fontWeight: "800", color: C.inkLight, marginBottom: 8 },
+  ligneIndex: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: C.inkLight,
+    marginBottom: 8,
+  },
   formGrid: { flexDirection: "row", gap: 8 },
   inputBox: { flex: 1 },
-  fieldLabel: { fontSize: 9, fontWeight: "800", color: C.inkLight, marginBottom: 4 },
+  fieldLabel: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: C.inkLight,
+    marginBottom: 4,
+  },
   input: {
     backgroundColor: "#FFF",
     borderWidth: 1,
@@ -1284,7 +1685,13 @@ const s = StyleSheet.create({
     alignItems: "center",
   },
   paletteLabel: { fontSize: 12, fontWeight: "700", color: C.green },
-  paletteCode: { fontSize: 24, fontWeight: "900", color: C.ink, letterSpacing: 2, marginVertical: 6 },
+  paletteCode: {
+    fontSize: 24,
+    fontWeight: "900",
+    color: C.ink,
+    letterSpacing: 2,
+    marginVertical: 6,
+  },
   paletteSub: { fontSize: 11, color: C.inkLight },
 
   printBtn: {
@@ -1309,7 +1716,11 @@ const s = StyleSheet.create({
   },
   searchBarIcon: { marginRight: 10, fontSize: 16, color: C.inkLight },
   searchBarInput: { flex: 1, fontSize: 14, color: C.ink, fontWeight: "500" },
-  clearSearchContainer: { padding: 4, backgroundColor: "rgba(31,22,16,0.1)", borderRadius: 100 },
+  clearSearchContainer: {
+    padding: 4,
+    backgroundColor: "rgba(31,22,16,0.1)",
+    borderRadius: 100,
+  },
   clearSearchText: { fontSize: 10, color: C.inkMid, fontWeight: "bold" },
 
   paginationWrapper: {
@@ -1330,7 +1741,11 @@ const s = StyleSheet.create({
     alignItems: "center",
     elevation: 1,
   },
-  pagBtnDisabled: { backgroundColor: "#F5F5F5", borderColor: "#E0E0E0", elevation: 0 },
+  pagBtnDisabled: {
+    backgroundColor: "#F5F5F5",
+    borderColor: "#E0E0E0",
+    elevation: 0,
+  },
   pagBtnTxt: { color: C.red, fontWeight: "700", fontSize: 13 },
   pagBtnTxtDisabled: { color: "#B0B0B0" },
   pageBadge: {
@@ -1361,7 +1776,12 @@ const s = StyleSheet.create({
     borderBottomColor: C.border,
     paddingBottom: 6,
   },
-  histPalNum: { fontSize: 15, fontWeight: "800", color: C.inkMid, letterSpacing: 0.5 },
+  histPalNum: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: C.inkMid,
+    letterSpacing: 0.5,
+  },
   histDate: { fontSize: 11, color: C.inkLight },
   histInfo: { fontSize: 13, color: C.ink },
 
@@ -1389,13 +1809,29 @@ const s = StyleSheet.create({
     borderRadius: 1,
     marginBottom: 16,
   },
-  copyright: { fontSize: 12, color: C.inkLight, textAlign: "center", lineHeight: 20 },
+  copyright: {
+    fontSize: 12,
+    color: C.inkLight,
+    textAlign: "center",
+    lineHeight: 20,
+  },
   copyrightLink: { fontSize: 12, color: C.red, fontWeight: "700" },
 });
 
 const div = StyleSheet.create({
-  row: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 14 },
-  txt: { fontSize: 9, fontWeight: "800", color: C.inkFaint, letterSpacing: 2.5, flexShrink: 0 },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 14,
+  },
+  txt: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: C.inkFaint,
+    letterSpacing: 2.5,
+    flexShrink: 0,
+  },
   line: { flex: 1, height: 1, backgroundColor: C.border },
 });
 
@@ -1410,8 +1846,19 @@ const sb = StyleSheet.create({
     marginBottom: 4,
   },
   logoImg: { width: 189, height: 64, marginBottom: 8 },
-  brand: { fontSize: 14, fontWeight: "900", color: C.inkMid, letterSpacing: 0.5 },
-  brandSub: { fontSize: 9, fontWeight: "700", color: C.red, letterSpacing: 2, marginTop: 2 },
+  brand: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: C.inkMid,
+    letterSpacing: 0.5,
+  },
+  brandSub: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: C.red,
+    letterSpacing: 2,
+    marginTop: 2,
+  },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -1433,7 +1880,12 @@ const sb = StyleSheet.create({
   avatarLgTxt: { color: "#FFF", fontWeight: "800", fontSize: 20 },
   name: { fontSize: 15, fontWeight: "800", color: C.ink },
   role: { fontSize: 11, color: C.inkLight, marginTop: 2 },
-  sep: { height: 1, backgroundColor: C.border, marginHorizontal: 20, marginBottom: 16 },
+  sep: {
+    height: 1,
+    backgroundColor: C.border,
+    marginHorizontal: 20,
+    marginBottom: 16,
+  },
   section: { paddingHorizontal: 14 },
   sectionLabel: {
     fontSize: 9,

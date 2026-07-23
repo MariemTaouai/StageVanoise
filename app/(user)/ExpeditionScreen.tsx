@@ -1,28 +1,32 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { router, Stack, useFocusEffect } from "expo-router";
-import React, { useEffect, useRef, useState, useCallback } from "react";
-import {
-  Animated,
-  Dimensions,
-  Image,
-  Linking,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-  ActivityIndicator,
-  Alert,
-  RefreshControl,
-  TextInput,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { CameraView, useCameraPermissions } from "expo-camera";
+import { router, Stack, useFocusEffect } from "expo-router";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import {
+    ActivityIndicator,
+    Alert,
+    Animated,
+    Dimensions,
+    Image,
+    Linking,
+    RefreshControl,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
+} from "react-native";
 import { LineChart } from "react-native-chart-kit";
-import { getApiUrl } from "../../Services/apiService";
-import { downloadLabelPdf, generateZplLabel, sendToPrinter, type ZplData } from "../../Services/printService";
-
+import { SafeAreaView } from "react-native-safe-area-context";
+import {
+    downloadLabelPdf,
+    generateZplLabel,
+    sendToPrinter,
+    type ZplData,
+} from "../../Services/printService";
+import { getApiUrl, getConfiguredApiUrl } from "../../Services/apiService";
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const SIDEBAR_WIDTH = 280;
 
@@ -42,7 +46,20 @@ const C = {
   border: "#EFE5D3",
 };
 
-const MOIS = ["Jan", "Fév", "Mar", "Avr", "Mai", "Jun", "Jul", "Aoû", "Sep", "Oct", "Nov", "Déc"];
+const MOIS = [
+  "Jan",
+  "Fév",
+  "Mar",
+  "Avr",
+  "Mai",
+  "Jun",
+  "Jul",
+  "Aoû",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Déc",
+];
 const ITEMS_PER_PAGE = 3;
 
 interface SousLotDetail {
@@ -79,7 +96,7 @@ interface ScannedData {
   lot: string;
   sousLot: string;
   expedie: boolean;
-  type: 'P' | 'S';
+  type: "P" | "S";
   qteUS: number;
   coefUS: number;
   quantiteLanceeUVC: number | null;
@@ -103,7 +120,7 @@ const formatDate = (date: string | null): string => {
   try {
     const dateObj = new Date(date);
     if (isNaN(dateObj.getTime())) return date;
-    
+
     // ✅ Forcer le fuseau horaire Tunisia (UTC+1)
     return dateObj.toLocaleString("fr-FR", {
       day: "2-digit",
@@ -134,7 +151,7 @@ const getPaletteIdentifiant = (data: ScannedData | null): string => {
 };
 
 export default function ExpeditionScreen() {
-  console.log('📦 [ExpeditionScreen] Écran EXPÉDITION chargé !');
+  console.log("📦 [ExpeditionScreen] Écran EXPÉDITION chargé !");
 
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [isChecking, setIsChecking] = useState(true);
@@ -171,130 +188,141 @@ export default function ExpeditionScreen() {
 
   const refreshAccessToken = useCallback(async (): Promise<string | null> => {
     try {
-      const refreshToken = await AsyncStorage.getItem('refresh_token');
+      const refreshToken = await AsyncStorage.getItem("refresh_token");
       if (!refreshToken) return null;
 
-      const url = await getApiUrl();
+      const url = await getConfiguredApiUrl();
       const response = await fetch(`${url}/refresh-token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refreshToken }),
       });
 
       const data = await response.json();
       if (response.ok && data.accessToken) {
-        await AsyncStorage.setItem('access_token', data.accessToken);
+        await AsyncStorage.setItem("access_token", data.accessToken);
         return data.accessToken;
       }
       return null;
     } catch (error) {
-      console.error('❌ Erreur refresh:', error);
+      console.error("❌ Erreur refresh:", error);
       return null;
     }
   }, []);
 
   const clearTokensAndLogout = useCallback(async () => {
     try {
-      const refreshToken = await AsyncStorage.getItem('refresh_token');
-      const url = await getApiUrl();
+      const refreshToken = await AsyncStorage.getItem("refresh_token");
+      const url = await getConfiguredApiUrl();
       if (refreshToken) {
         await fetch(`${url}/logout`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ refreshToken }),
         });
       }
-      await AsyncStorage.multiRemove(['access_token', 'refresh_token', 'user', 'user_roles', 'selected_role']);
-      router.replace('/(auth)/login');
+      await AsyncStorage.multiRemove([
+        "access_token",
+        "refresh_token",
+        "user",
+        "user_roles",
+        "selected_role",
+      ]);
+      router.replace("/(auth)/login");
     } catch (error) {
-      console.error('❌ Erreur logout:', error);
-      router.replace('/(auth)/login');
+      console.error("❌ Erreur logout:", error);
+      router.replace("/(auth)/login");
     }
   }, []);
 
-  const fetchWithToken = useCallback(async (url: string, options: RequestInit = {}) => {
-    try {
-      let token = await AsyncStorage.getItem('access_token');
-      if (!token) {
-        const newToken = await refreshAccessToken();
-        if (!newToken) throw new Error('Session expirée');
-        token = newToken;
-      }
-
-      const headers = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-        ...options.headers,
-      };
-
-      let response = await fetch(url, { ...options, headers });
-
-      if (response.status === 401) {
-        const newToken = await refreshAccessToken();
-        if (newToken) {
-          const retryHeaders = {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${newToken}`,
-            ...options.headers,
-          };
-          response = await fetch(url, { ...options, headers: retryHeaders });
-        } else {
-          await clearTokensAndLogout();
-          throw new Error('Session expirée');
+  const fetchWithToken = useCallback(
+    async (url: string, options: RequestInit = {}) => {
+      try {
+        let token = await AsyncStorage.getItem("access_token");
+        if (!token) {
+          const newToken = await refreshAccessToken();
+          if (!newToken) throw new Error("Session expirée");
+          token = newToken;
         }
-      }
 
-      return response;
-    } catch (error) {
-      console.error('❌ Erreur fetchWithToken:', error);
-      throw error;
-    }
-  }, [refreshAccessToken, clearTokensAndLogout]);
+        const headers = {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          ...options.headers,
+        };
+
+        let response = await fetch(url, { ...options, headers });
+
+        if (response.status === 401) {
+          const newToken = await refreshAccessToken();
+          if (newToken) {
+            const retryHeaders = {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${newToken}`,
+              ...options.headers,
+            };
+            response = await fetch(url, { ...options, headers: retryHeaders });
+          } else {
+            await clearTokensAndLogout();
+            throw new Error("Session expirée");
+          }
+        }
+
+        return response;
+      } catch (error) {
+        console.error("❌ Erreur fetchWithToken:", error);
+        throw error;
+      }
+    },
+    [refreshAccessToken, clearTokensAndLogout],
+  );
 
   useEffect(() => {
     const checkAccess = async () => {
       try {
-        console.log('🔍 [ExpeditionScreen] Vérification des rôles...');
+        console.log("🔍 [ExpeditionScreen] Vérification des rôles...");
 
-        const accessToken = await AsyncStorage.getItem('access_token');
+        const accessToken = await AsyncStorage.getItem("access_token");
         if (!accessToken) {
-          console.log('❌ Pas de token');
-          Alert.alert('⛔ Non authentifié', 'Veuillez vous reconnecter.');
-          router.replace('/(auth)/login');
+          console.log("❌ Pas de token");
+          Alert.alert("⛔ Non authentifié", "Veuillez vous reconnecter.");
+          router.replace("/(auth)/login");
           setIsChecking(false);
           return;
         }
 
-        const rolesString = await AsyncStorage.getItem('user_roles');
+        const rolesString = await AsyncStorage.getItem("user_roles");
         if (!rolesString) {
-          console.log('❌ Aucun rôle trouvé');
-          Alert.alert('⛔ Accès refusé', 'Vous n\'avez pas les droits.');
-          router.replace('/(auth)/login');
+          console.log("❌ Aucun rôle trouvé");
+          Alert.alert("⛔ Accès refusé", "Vous n'avez pas les droits.");
+          router.replace("/(auth)/login");
           setIsChecking(false);
           return;
         }
 
         const userRoles = JSON.parse(rolesString);
-        console.log('👤 Rôles:', userRoles);
+        console.log("👤 Rôles:", userRoles);
         setUserRoles(userRoles);
 
         const hasAccess = userRoles.some((role: string) =>
-          ['Expéditeur', 'Admin'].includes(role)
+          ["Expéditeur", "Admin"].includes(role),
         );
 
         if (!hasAccess) {
-          Alert.alert('⛔ Accès refusé', 'Vous n\'avez pas les droits pour accéder à cette page.');
-          router.replace('/(auth)/login');
+          Alert.alert(
+            "⛔ Accès refusé",
+            "Vous n'avez pas les droits pour accéder à cette page.",
+          );
+          router.replace("/(auth)/login");
           setIsChecking(false);
           return;
         }
 
-        console.log('✅ Accès autorisé !');
+        console.log("✅ Accès autorisé !");
         setIsAuthorized(true);
-
       } catch (error) {
-        console.error('❌ Erreur vérification:', error);
-        router.replace('/(auth)/login');
+        console.error("❌ Erreur vérification:", error);
+        router.replace("/(auth)/login");
       } finally {
         setIsChecking(false);
       }
@@ -303,82 +331,109 @@ export default function ExpeditionScreen() {
     checkAccess();
   }, []);
 
-  const fetchStats = useCallback(async (url?: string) => {
-    const baseUrl = url || apiUrl;
-    if (!baseUrl) {
-      console.warn("⚠️ API URL non configurée");
-      return;
-    }
-
-    try {
-      console.log("📊 Récupération des statistiques...");
-      const response = await fetchWithToken(`${baseUrl}/api/expedition/stats`);
-      if (!response.ok) throw new Error("Erreur serveur");
-      const data = await response.json();
-      console.log("📊 Statistiques reçues:", data);
-      setStats(data);
-    } catch (e) {
-      console.error("❌ Erreur fetch stats:", e);
-    }
-  }, [apiUrl, fetchWithToken]);
-
-  const fetchHistorique = useCallback(async (pageNum = 1, search = "") => {
-    if (!apiUrl) return;
-
-    try {
-      setLoadingHist(true);
-      const url = `${apiUrl}/api/expedition/historique?page=${pageNum}&search=${encodeURIComponent(search)}&limit=${ITEMS_PER_PAGE}`;
-      console.log(`📜 FETCH HISTORIQUE - Page ${pageNum}:`, url);
-      const response = await fetchWithToken(url);
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.items) {
-          const normalized: ExpeditionHistoryItem[] = data.items.map((item: any) => ({
-            id: item.id,
-            palette: item.palette ?? null,
-            codeDeclaration: item.codeDeclaration ?? null,
-            numOF: item.numOF,
-            article: item.article,
-            quantiteTotale: item.quantiteTotale ?? item.quantiteLancee ?? 0,
-            unite: item.unite,
-            date_expedition: item.date_expedition,
-            lot: item.lot,
-            sousLots: Array.isArray(item.sousLots)
-              ? item.sousLots
-              : (item.sousLot ? [{ sousLot: item.sousLot, quantiteLancee: item.quantiteLancee ?? 0, unite: item.unite }] : []),
-            expedie: item.expedie,
-          }));
-
-          setHistorique(normalized);
-          setTotalItems(data.total || 0);
-          setTotalPages(data.totalPages || 1);
-          setCurrentPage(pageNum);
-          console.log(`✅ Historique: page ${pageNum}/${data.totalPages}, ${normalized.length} palettes`);
-        }
+  const fetchStats = useCallback(
+    async (url?: string) => {
+      const baseUrl = url || apiUrl;
+      if (!baseUrl) {
+        console.warn("⚠️ API URL non configurée");
+        return;
       }
-    } catch (e) {
-      console.error("❌ Erreur fetchHistorique:", e);
-      Alert.alert("Erreur", "Impossible de charger l'historique");
-    } finally {
-      setLoadingHist(false);
-    }
-  }, [apiUrl, fetchWithToken]);
 
-  const goToPage = useCallback((pageNum: number) => {
-    if (pageNum < 1 || pageNum > totalPages || pageNum === currentPage) return;
-    setCurrentPage(pageNum);
-    fetchHistorique(pageNum, searchTerm);
-    if (scrollViewRef.current) {
-      scrollViewRef.current.scrollTo({ y: 0, animated: true });
-    }
-  }, [totalPages, currentPage, searchTerm, fetchHistorique]);
+      try {
+        console.log("📊 Récupération des statistiques...");
+        const response = await fetchWithToken(
+          `${baseUrl}/api/expedition/stats`,
+        );
+        if (!response.ok) throw new Error("Erreur serveur");
+        const data = await response.json();
+        console.log("📊 Statistiques reçues:", data);
+        setStats(data);
+      } catch (e) {
+        console.error("❌ Erreur fetch stats:", e);
+      }
+    },
+    [apiUrl, fetchWithToken],
+  );
 
-  const handleSearch = useCallback((text: string) => {
-    setSearchTerm(text);
-    setCurrentPage(1);
-    fetchHistorique(1, text);
-  }, [fetchHistorique]);
+  const fetchHistorique = useCallback(
+    async (pageNum = 1, search = "") => {
+      if (!apiUrl) return;
+
+      try {
+        setLoadingHist(true);
+        const url = `${apiUrl}/api/expedition/historique?page=${pageNum}&search=${encodeURIComponent(search)}&limit=${ITEMS_PER_PAGE}`;
+        console.log(`📜 FETCH HISTORIQUE - Page ${pageNum}:`, url);
+        const response = await fetchWithToken(url);
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.items) {
+            const normalized: ExpeditionHistoryItem[] = data.items.map(
+              (item: any) => ({
+                id: item.id,
+                palette: item.palette ?? null,
+                codeDeclaration: item.codeDeclaration ?? null,
+                numOF: item.numOF,
+                article: item.article,
+                quantiteTotale: item.quantiteTotale ?? item.quantiteLancee ?? 0,
+                unite: item.unite,
+                date_expedition: item.date_expedition,
+                lot: item.lot,
+                sousLots: Array.isArray(item.sousLots)
+                  ? item.sousLots
+                  : item.sousLot
+                    ? [
+                        {
+                          sousLot: item.sousLot,
+                          quantiteLancee: item.quantiteLancee ?? 0,
+                          unite: item.unite,
+                        },
+                      ]
+                    : [],
+                expedie: item.expedie,
+              }),
+            );
+
+            setHistorique(normalized);
+            setTotalItems(data.total || 0);
+            setTotalPages(data.totalPages || 1);
+            setCurrentPage(pageNum);
+            console.log(
+              `✅ Historique: page ${pageNum}/${data.totalPages}, ${normalized.length} palettes`,
+            );
+          }
+        }
+      } catch (e) {
+        console.error("❌ Erreur fetchHistorique:", e);
+        Alert.alert("Erreur", "Impossible de charger l'historique");
+      } finally {
+        setLoadingHist(false);
+      }
+    },
+    [apiUrl, fetchWithToken],
+  );
+
+  const goToPage = useCallback(
+    (pageNum: number) => {
+      if (pageNum < 1 || pageNum > totalPages || pageNum === currentPage)
+        return;
+      setCurrentPage(pageNum);
+      fetchHistorique(pageNum, searchTerm);
+      if (scrollViewRef.current) {
+        scrollViewRef.current.scrollTo({ y: 0, animated: true });
+      }
+    },
+    [totalPages, currentPage, searchTerm, fetchHistorique],
+  );
+
+  const handleSearch = useCallback(
+    (text: string) => {
+      setSearchTerm(text);
+      setCurrentPage(1);
+      fetchHistorique(1, text);
+    },
+    [fetchHistorique],
+  );
 
   const clearSearch = useCallback(() => {
     setSearchTerm("");
@@ -389,7 +444,7 @@ export default function ExpeditionScreen() {
   useEffect(() => {
     const init = async () => {
       try {
-        const url = await getApiUrl();
+        const url = await getConfiguredApiUrl();
         setApiUrl(url);
         console.log("✅ API URL chargée:", url);
 
@@ -403,8 +458,11 @@ export default function ExpeditionScreen() {
         await fetchStats(url);
         await fetchHistorique(1, "");
 
-        Animated.timing(fadeAnim, { toValue: 1, duration: 800, useNativeDriver: true }).start();
-
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 800,
+          useNativeDriver: true,
+        }).start();
       } catch (error) {
         console.error("❌ Erreur initialisation:", error);
         Alert.alert("Erreur", "Impossible de charger les données");
@@ -422,7 +480,7 @@ export default function ExpeditionScreen() {
         fetchStats(apiUrl);
         fetchHistorique(currentPage, searchTerm);
       }
-    }, [apiUrl, searchTerm, currentPage, fetchStats, fetchHistorique])
+    }, [apiUrl, searchTerm, currentPage, fetchStats, fetchHistorique]),
   );
 
   const onRefresh = useCallback(async () => {
@@ -435,15 +493,33 @@ export default function ExpeditionScreen() {
   const openSidebar = useCallback(() => {
     setSidebarOpen(true);
     Animated.parallel([
-      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 100, friction: 14 }),
-      Animated.timing(overlayAnim, { toValue: 1, duration: 250, useNativeDriver: true }),
+      Animated.spring(slideAnim, {
+        toValue: 0,
+        useNativeDriver: true,
+        tension: 100,
+        friction: 14,
+      }),
+      Animated.timing(overlayAnim, {
+        toValue: 1,
+        duration: 250,
+        useNativeDriver: true,
+      }),
     ]).start();
   }, []);
 
   const closeSidebar = useCallback(() => {
     Animated.parallel([
-      Animated.spring(slideAnim, { toValue: -SIDEBAR_WIDTH, useNativeDriver: true, tension: 100, friction: 14 }),
-      Animated.timing(overlayAnim, { toValue: 0, duration: 200, useNativeDriver: true }),
+      Animated.spring(slideAnim, {
+        toValue: -SIDEBAR_WIDTH,
+        useNativeDriver: true,
+        tension: 100,
+        friction: 14,
+      }),
+      Animated.timing(overlayAnim, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }),
     ]).start(() => setSidebarOpen(false));
   }, []);
 
@@ -454,64 +530,84 @@ export default function ExpeditionScreen() {
 
   const switchRole = useCallback(async () => {
     try {
-      await AsyncStorage.removeItem('selected_role');
-      router.push('/(auth)/RoleSelectionScreen');
+      await AsyncStorage.removeItem("selected_role");
+      router.push("/(auth)/RoleSelectionScreen");
     } catch (error) {
-      console.error('❌ Erreur changement de rôle:', error);
+      console.error("❌ Erreur changement de rôle:", error);
     }
   }, []);
 
-  const handleBarcodeScanned = useCallback(async ({ data }: { data: string }) => {
-    if (!apiUrl) {
-      Alert.alert("Erreur", "URL API non configurée");
-      return;
-    }
-
-    setShowCamera(false);
-    try {
-      const response = await fetchWithToken(
-        `${apiUrl}/api/expedition/check/${encodeURIComponent(data.trim())}`
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        Alert.alert("Erreur", errorData.message || "Palette non trouvée.");
+  const handleBarcodeScanned = useCallback(
+    async ({ data }: { data: string }) => {
+      if (!apiUrl) {
+        Alert.alert("Erreur", "URL API non configurée");
         return;
       }
 
-      const result = await response.json();
-      console.log("📦 Données complètes:", result);
-      setScannedData(result);
-      Animated.spring(fadeAnim, { toValue: 1, useNativeDriver: true }).start();
-    } catch (e) {
-      Alert.alert("Erreur", "Serveur injoignable");
-    }
-  }, [apiUrl, fetchWithToken, fadeAnim]);
+      setShowCamera(false);
+      try {
+        const response = await fetchWithToken(
+          `${apiUrl}/api/expedition/check/${encodeURIComponent(data.trim())}`,
+        );
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          Alert.alert("Erreur", errorData.message || "Palette non trouvée.");
+          return;
+        }
+
+        const result = await response.json();
+        console.log("📦 Données complètes:", result);
+        setScannedData(result);
+        Animated.spring(fadeAnim, {
+          toValue: 1,
+          useNativeDriver: true,
+        }).start();
+      } catch (e) {
+        Alert.alert("Erreur", "Serveur injoignable");
+      }
+    },
+    [apiUrl, fetchWithToken, fadeAnim],
+  );
 
   const expedierPalette = useCallback(async () => {
     setLoading(true);
     try {
-      const codeToValidate = scannedData?.palette || scannedData?.codeDeclaration;
+      const codeToValidate =
+        scannedData?.palette || scannedData?.codeDeclaration;
       console.log(`📤 Validation de la palette: ${codeToValidate}`);
 
-      const response = await fetchWithToken(`${apiUrl}/api/expedition/valider`, {
-        method: "POST",
-        body: JSON.stringify({ code: codeToValidate }),
-      });
+      const response = await fetchWithToken(
+        `${apiUrl}/api/expedition/valider`,
+        {
+          method: "POST",
+          body: JSON.stringify({ code: codeToValidate }),
+        },
+      );
 
       const result = await response.json();
 
       if (response.ok) {
-        Alert.alert("✅ Succès", `Palette validée avec succès !\n${result.message || ""}`);
+        Alert.alert(
+          "✅ Succès",
+          `Palette validée avec succès !\n${result.message || ""}`,
+        );
 
         const identifiantPalette = getPaletteIdentifiant(scannedData);
 
-        if (identifiantPalette && !countedPalettesRef.current.has(identifiantPalette)) {
+        if (
+          identifiantPalette &&
+          !countedPalettesRef.current.has(identifiantPalette)
+        ) {
           countedPalettesRef.current.add(identifiantPalette);
-          setPalettesExpediees(prev => prev + 1);
-          console.log(`📊 Nouvelle palette expédiée (total session: ${countedPalettesRef.current.size})`);
+          setPalettesExpediees((prev) => prev + 1);
+          console.log(
+            `📊 Nouvelle palette expédiée (total session: ${countedPalettesRef.current.size})`,
+          );
         } else {
-          console.log(`📊 Sous-lot supplémentaire pour la palette "${identifiantPalette}" — compteur inchangé`);
+          console.log(
+            `📊 Sous-lot supplémentaire pour la palette "${identifiantPalette}" — compteur inchangé`,
+          );
         }
 
         setScannedData(null);
@@ -529,11 +625,21 @@ export default function ExpeditionScreen() {
       }
     } catch (e) {
       console.error("❌ Erreur validation:", e);
-      Alert.alert("❌ Erreur", "Impossible de contacter le serveur.\nVérifiez votre connexion.");
+      Alert.alert(
+        "❌ Erreur",
+        "Impossible de contacter le serveur.\nVérifiez votre connexion.",
+      );
     } finally {
       setLoading(false);
     }
-  }, [apiUrl, scannedData, fetchWithToken, fetchStats, fetchHistorique, searchTerm]);
+  }, [
+    apiUrl,
+    scannedData,
+    fetchWithToken,
+    fetchStats,
+    fetchHistorique,
+    searchTerm,
+  ]);
 
   const validerExpedition = useCallback(async () => {
     if (!apiUrl) {
@@ -550,19 +656,20 @@ export default function ExpeditionScreen() {
       Alert.alert(
         "⚠️ Attention",
         "Cette palette a déjà été expédiée !\n" +
-        `Date d'expédition : ${formatDate(scannedData.date_expedition)}`
+          `Date d'expédition : ${formatDate(scannedData.date_expedition)}`,
       );
       return;
     }
 
-    const codeDisplay = scannedData.palette || scannedData.codeDeclaration || "N/A";
+    const codeDisplay =
+      scannedData.palette || scannedData.codeDeclaration || "N/A";
     Alert.alert(
       "📦 Confirmation",
       `Voulez-vous vraiment expédier la palette :\n"${codeDisplay}" ?`,
       [
         { text: "Annuler", style: "cancel" },
-        { text: "Confirmer", onPress: () => expedierPalette() }
-      ]
+        { text: "Confirmer", onPress: () => expedierPalette() },
+      ],
     );
   }, [apiUrl, scannedData, expedierPalette]);
 
@@ -588,7 +695,7 @@ export default function ExpeditionScreen() {
             qty: scannedData.quantiteLancee || 0,
             LOT: scannedData.lot || "N/A",
             qteUVC: scannedData.quantiteLanceeUVC || undefined,
-          }
+          },
         ],
         dateExp: scannedData.date_expedition || null,
       };
@@ -623,7 +730,7 @@ export default function ExpeditionScreen() {
             qty: scannedData.quantiteLancee || 0,
             LOT: scannedData.lot || "N/A",
             qteUVC: scannedData.quantiteLanceeUVC ?? undefined,
-          }
+          },
         ],
         dateExp: scannedData.date_expedition || null,
       };
@@ -637,15 +744,17 @@ export default function ExpeditionScreen() {
 
   const chartLabels = stats.monthly?.map((d) => MOIS[(d.mois || 1) - 1]) || [];
   const chartDataValues = stats.monthly?.map((d) => d.total || 0) || [];
-  const hasData = chartLabels.length > 0 && chartDataValues.some(v => v > 0);
+  const hasData = chartLabels.length > 0 && chartDataValues.some((v) => v > 0);
 
   const chartData = {
     labels: hasData ? chartLabels : ["Jan", "Fév", "Mar", "Avr", "Mai", "Jun"],
-    datasets: [{
-      data: hasData ? chartDataValues : [0, 0, 0, 0, 0, 0],
-      color: (opacity = 1) => `rgba(192, 32, 42, ${opacity})`,
-      strokeWidth: 3,
-    }],
+    datasets: [
+      {
+        data: hasData ? chartDataValues : [0, 0, 0, 0, 0, 0],
+        color: (opacity = 1) => `rgba(192, 32, 42, ${opacity})`,
+        strokeWidth: 3,
+      },
+    ],
   };
 
   const chartConfig = {
@@ -656,7 +765,10 @@ export default function ExpeditionScreen() {
     strokeWidth: 2,
     decimalPlaces: 0,
     propsForDots: { r: "5", strokeWidth: "2", stroke: C.red },
-    propsForBackgroundLines: { stroke: "rgba(125,110,101,0.15)", strokeWidth: 1 },
+    propsForBackgroundLines: {
+      stroke: "rgba(125,110,101,0.15)",
+      strokeWidth: 1,
+    },
   };
 
   if (isChecking) {
@@ -699,7 +811,11 @@ export default function ExpeditionScreen() {
           <Text style={styles.topbarSubTitle}>Dr. Oetker · Vanoise App</Text>
         </View>
         <View style={styles.logoWrap}>
-          <Image source={require("../../assets/favicon.png")} style={styles.logo} resizeMode="contain" />
+          <Image
+            source={require("../../assets/favicon.png")}
+            style={styles.logo}
+            resizeMode="contain"
+          />
         </View>
       </View>
       <View style={styles.redRule} />
@@ -708,7 +824,13 @@ export default function ExpeditionScreen() {
         ref={scrollViewRef}
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[C.red]} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={[C.red]}
+          />
+        }
       >
         <Animated.View style={{ opacity: fadeAnim }}>
           {/* Stats */}
@@ -722,9 +844,16 @@ export default function ExpeditionScreen() {
               </View>
               <Text style={styles.statsVal}>{stats.total || 0}</Text>
               <View style={styles.statsProgress}>
-                <View style={[styles.statsProgressBar, { width: `${Math.min((stats.total / 100) * 100, 100)}%` }]} />
+                <View
+                  style={[
+                    styles.statsProgressBar,
+                    { width: `${Math.min((stats.total / 100) * 100, 100)}%` },
+                  ]}
+                />
               </View>
-              <Text style={styles.statsSub}>Objectif mensuel : 100 palettes</Text>
+              <Text style={styles.statsSub}>
+                Objectif mensuel : 100 palettes
+              </Text>
             </View>
           )}
 
@@ -741,178 +870,198 @@ export default function ExpeditionScreen() {
                 >
                   <Text style={styles.scanBtnIcon}>📷</Text>
                   <Text style={styles.scanBtnTxt}>SCANNER UNE PALETTE</Text>
-                  <Text style={styles.scanBtnSub}>Appuyez pour activer la caméra</Text>
+                  <Text style={styles.scanBtnSub}>
+                    Appuyez pour activer la caméra
+                  </Text>
                 </TouchableOpacity>
               ) : (
                 <View style={styles.infoCard}>
                   <View style={styles.infoHeader}>
                     <Text style={styles.infoBadge}>✅ SCAN RÉUSSI</Text>
-                    <TouchableOpacity onPress={() => setScannedData(null)} style={styles.infoClose}>
+                    <TouchableOpacity
+                      onPress={() => setScannedData(null)}
+                      style={styles.infoClose}
+                    >
                       <Text style={styles.infoCloseTxt}>✕</Text>
                     </TouchableOpacity>
                   </View>
 
-                  <ScrollView style={styles.infoScroll} showsVerticalScrollIndicator={true} nestedScrollEnabled={true}>
+                  <ScrollView
+                    style={styles.infoScroll}
+                    showsVerticalScrollIndicator={true}
+                    nestedScrollEnabled={true}
+                  >
                     {/* Identifiant */}
                     <View style={styles.infoGroup}>
                       <Text style={styles.infoGroupTitle}>🆔 IDENTIFIANT</Text>
                       {scannedData.palette ? (
                         <>
-                          <View style={[styles.infoRow, styles.infoRowHighlight]}>
+                          <View
+                            style={[styles.infoRow, styles.infoRowHighlight]}
+                          >
                             <Text style={styles.infoLabel}>Palette</Text>
-                            <Text style={[styles.infoValue, styles.infoValueHighlight]}>{scannedData.palette || "N/A"}</Text>
+                            <Text
+                              style={[
+                                styles.infoValue,
+                                styles.infoValueHighlight,
+                              ]}
+                            >
+                              {scannedData.palette || "N/A"}
+                            </Text>
                           </View>
                           <View style={styles.infoRow}>
-                            <Text style={styles.infoLabel}>Code Déclaration</Text>
-                            <Text style={styles.infoValue}>{scannedData.codeDeclaration || "N/A"}</Text>
+                            <Text style={styles.infoLabel}>
+                              Code Déclaration
+                            </Text>
+                            <Text style={styles.infoValue}>
+                              {scannedData.codeDeclaration || "N/A"}
+                            </Text>
                           </View>
                         </>
                       ) : (
                         <>
-                          <View style={[styles.infoRow, styles.infoRowHighlight]}>
-                            <Text style={styles.infoLabel}>Code Déclaration</Text>
-                            <Text style={[styles.infoValue, styles.infoValueHighlight]}>{scannedData.codeDeclaration || "N/A"}</Text>
+                          <View
+                            style={[styles.infoRow, styles.infoRowHighlight]}
+                          >
+                            <Text style={styles.infoLabel}>
+                              Code Déclaration
+                            </Text>
+                            <Text
+                              style={[
+                                styles.infoValue,
+                                styles.infoValueHighlight,
+                              ]}
+                            >
+                              {scannedData.codeDeclaration || "N/A"}
+                            </Text>
                           </View>
                           <View style={styles.infoRow}>
                             <Text style={styles.infoLabel}>Palette</Text>
-                            <Text style={styles.infoValue}>{scannedData.palette || "N/A"}</Text>
+                            <Text style={styles.infoValue}>
+                              {scannedData.palette || "N/A"}
+                            </Text>
                           </View>
                         </>
                       )}
                       <View style={styles.infoRow}>
                         <Text style={styles.infoLabel}>Type</Text>
-                        <Text style={[styles.infoValue, scannedData.type === 'P' ? styles.statusExpedie : styles.statusNonExpedie]}>
+                        <Text
+                          style={[
+                            styles.infoValue,
+                            scannedData.type === "P"
+                              ? styles.statusExpedie
+                              : styles.statusNonExpedie,
+                          ]}
+                        >
                           {getTypeLabel(scannedData)}
                         </Text>
                       </View>
                     </View>
 
-                    {/* Quantités */}
-                    <View style={styles.infoGroup}>
-                      <Text style={styles.infoGroupTitle}>📊 QUANTITÉS</Text>
-                      {scannedData.type === 'S' ? (
-                        <>
-                          <View style={[styles.infoRow, styles.infoRowHighlight]}>
-                            <Text style={styles.infoLabel}>Quantité Totale</Text>
-                            <Text style={[styles.infoValue, styles.infoValueHighlight]}>
-                              {scannedData.quantiteLancee || 0} {scannedData.unite || ""}
-                            </Text>
-                          </View>
-                          <View style={[styles.infoRow, styles.uvcRow]}>
-                            <Text style={[styles.infoLabel, styles.uvcLabel]}>Quantité Lancée UVC</Text>
-                            <Text style={[styles.infoValue, styles.uvcValue]}>
-                              {scannedData.quantiteLanceeUVC || 0} {scannedData.unite || ""}
-                            </Text>
-                          </View>
-                          <View style={styles.infoRow}>
-                            <Text style={styles.infoLabel}>Quantité US</Text>
-                            <Text style={styles.infoValue}>
-                              {scannedData.qteUS || "N/A"} {scannedData.unite || ""}
-                            </Text>
-                          </View>
-                          <View style={[styles.infoRow, styles.uvcRow]}>
-                            <Text style={[styles.infoLabel, styles.uvcLabel]}>Quantité US UVC</Text>
-                            <Text style={[styles.infoValue, styles.uvcValue]}>
-                              {scannedData.qteUSUVC || "N/A"} {scannedData.unite || ""}
-                            </Text>
-                          </View>
-                          <View style={styles.infoRow}>
-                            <Text style={styles.infoLabel}>Coef US</Text>
-                            <Text style={styles.infoValue}>× {scannedData.coefUS || 1}</Text>
-                          </View>
-                        </>
-                      ) : (
-                        <>
-                          <View style={[styles.infoRow, styles.infoRowHighlight]}>
-                            <Text style={styles.infoLabel}>Quantité Totale</Text>
-                            <Text style={[styles.infoValue, styles.infoValueHighlight]}>
-                              {scannedData.quantiteLancee || 0} {scannedData.unite || ""}
-                            </Text>
-                          </View>
-                          <View style={styles.infoRow}>
-                            <Text style={styles.infoLabel}>Quantité US</Text>
-                            <Text style={styles.infoValue}>
-                              {scannedData.qteUS || "N/A"} {scannedData.unite || ""}
-                            </Text>
-                          </View>
-                          <View style={styles.infoRow}>
-                            <Text style={styles.infoLabel}>Unité</Text>
-                            <Text style={styles.infoValue}>{scannedData.unite || "N/A"}</Text>
-                          </View>
-                        </>
-                      )}
-                    </View>
+                    
 
                     {/* Production */}
                     <View style={styles.infoGroup}>
                       <Text style={styles.infoGroupTitle}>🏭 PRODUCTION</Text>
                       <View style={styles.infoRow}>
                         <Text style={styles.infoLabel}>Numéro OF</Text>
-                        <Text style={styles.infoValue}>{scannedData.numOF || "N/A"}</Text>
+                        <Text style={styles.infoValue}>
+                          {scannedData.numOF || "N/A"}
+                        </Text>
                       </View>
                       <View style={styles.infoRow}>
                         <Text style={styles.infoLabel}>Article</Text>
-                        <Text style={styles.infoValue}>{scannedData.article || "N/A"}</Text>
+                        <Text style={styles.infoValue}>
+                          {scannedData.article || "N/A"}
+                        </Text>
                       </View>
                       <View style={styles.infoRow}>
                         <Text style={styles.infoLabel}>Code Article</Text>
-                        <Text style={styles.infoValue}>{scannedData.codeArticle || "N/A"}</Text>
+                        <Text style={styles.infoValue}>
+                          {scannedData.codeArticle || "N/A"}
+                        </Text>
                       </View>
                     </View>
 
                     {/* ✅ LOTS & SOUS-LOTS - CORRIGÉ */}
                     <View style={styles.infoGroup}>
-                      <Text style={styles.infoGroupTitle}>🏷️ LOTS & SOUS-LOTS</Text>
-                      
+                      <Text style={styles.infoGroupTitle}>
+                        🏷️ LOTS & SOUS-LOTS
+                      </Text>
+
                       {/* Lot principal */}
                       <View style={styles.lotRow}>
                         <View style={styles.lotInfo}>
                           <Text style={styles.lotLabel}>📦 Lot</Text>
-                          <Text style={styles.lotValue}>{scannedData.lot || "N/A"}</Text>
+                          <Text style={styles.lotValue}>
+                            {scannedData.lot || "N/A"}
+                          </Text>
                         </View>
                         <View style={styles.lotInfo}>
                           <Text style={styles.lotLabel}>Qté Totale</Text>
                           <Text style={styles.lotValue}>
-                            {scannedData.quantiteLancee || 0} {scannedData.unite || ""}
+                            {scannedData.quantiteLancee || 0}{" "}
+                            {scannedData.unite || ""}
                           </Text>
                         </View>
                       </View>
 
                       {/* ✅ Liste de TOUS les sous-lots */}
-                      <Text style={styles.sousLotsTitle}>📎 Détail des sous-lots :</Text>
-                      
-                      {scannedData.sousLots && scannedData.sousLots.length > 0 ? (
+                      <Text style={styles.sousLotsTitle}>
+                        📎 Détail des sous-lots :
+                      </Text>
+
+                      {scannedData.sousLots &&
+                      scannedData.sousLots.length > 0 ? (
                         scannedData.sousLots.map((sl, idx) => (
                           <View key={idx} style={styles.sousLotRowDetail}>
                             <View style={styles.sousLotInfo}>
-                              <Text style={styles.sousLotLabel}>Sous-lot {idx + 1}</Text>
-                              <Text style={styles.sousLotValue}>{sl.sousLot || "N/A"}</Text>
+                              <Text style={styles.sousLotLabel}>
+                                Sous-lot {idx + 1}
+                              </Text>
+                              <Text style={styles.sousLotValue}>
+                                {sl.sousLot || "N/A"}
+                              </Text>
                             </View>
                             <View style={styles.sousLotInfo}>
                               <Text style={styles.sousLotLabel}>Qté</Text>
                               <Text style={styles.sousLotValue}>
-                                {sl.quantiteLancee || 0} {sl.unite || scannedData.unite || ""}
+                                {sl.quantiteLancee || 0}{" "}
+                                {sl.unite || scannedData.unite || ""}
                               </Text>
                             </View>
-                            {scannedData.type === 'S' && (
+                            {scannedData.type === "S" && (
                               <View style={styles.sousLotInfo}>
                                 <Text style={styles.sousLotLabel}>UVC</Text>
-                                <Text style={[styles.sousLotValue, { color: C.blue }]}>
-                                  {(sl.quantiteLancee * (scannedData.coefUS || 1)).toFixed(2)}
+                                <Text
+                                  style={[
+                                    styles.sousLotValue,
+                                    { color: C.blue },
+                                  ]}
+                                >
+                                  {(
+                                    sl.quantiteLancee *
+                                    (scannedData.coefUS || 1)
+                                  ).toFixed(2)}
                                 </Text>
                               </View>
                             )}
                           </View>
                         ))
                       ) : (
-                        <Text style={styles.sousLotEmpty}>Aucun sous-lot enregistré</Text>
+                        <Text style={styles.sousLotEmpty}>
+                          Aucun sous-lot enregistré
+                        </Text>
                       )}
 
                       {/* ✅ Total */}
                       <View style={styles.totalRow}>
-                        <Text style={styles.totalLabel}>📊 Total palette :</Text>
+                        <Text style={styles.totalLabel}>
+                          📊 Total palette :
+                        </Text>
                         <Text style={styles.totalValue}>
-                          {scannedData.quantiteLancee || 0} {scannedData.unite || ""}
+                          {scannedData.quantiteLancee || 0}{" "}
+                          {scannedData.unite || ""}
                         </Text>
                       </View>
                     </View>
@@ -922,11 +1071,27 @@ export default function ExpeditionScreen() {
                       <Text style={styles.infoGroupTitle}>📅 DATES</Text>
                       <View style={styles.infoRow}>
                         <Text style={styles.infoLabel}>Date Création</Text>
-                        <Text style={styles.infoValue}>{formatDate(scannedData.date_creation)}</Text>
+                        <Text style={styles.infoValue}>
+                          {formatDate(scannedData.date_creation)}
+                        </Text>
                       </View>
-                      <View style={[styles.infoRow, scannedData.date_expedition ? styles.infoRowHighlight : null]}>
+                      <View
+                        style={[
+                          styles.infoRow,
+                          scannedData.date_expedition
+                            ? styles.infoRowHighlight
+                            : null,
+                        ]}
+                      >
                         <Text style={styles.infoLabel}>Date Expédition</Text>
-                        <Text style={[styles.infoValue, scannedData.date_expedition ? styles.statusExpedie : styles.statusNonExpedie]}>
+                        <Text
+                          style={[
+                            styles.infoValue,
+                            scannedData.date_expedition
+                              ? styles.statusExpedie
+                              : styles.statusNonExpedie,
+                          ]}
+                        >
                           {formatDate(scannedData.date_expedition)}
                         </Text>
                       </View>
@@ -935,21 +1100,44 @@ export default function ExpeditionScreen() {
                     {/* Statut */}
                     <View style={styles.infoGroup}>
                       <Text style={styles.infoGroupTitle}>📌 STATUT</Text>
-                      <View style={[styles.infoRow, {
-                        backgroundColor: isExpedie(scannedData) ? '#E8F5E9' : '#FFEBEE',
-                        borderRadius: 8,
-                        paddingHorizontal: 12,
-                        paddingVertical: 10,
-                        borderWidth: 1,
-                        borderColor: isExpedie(scannedData) ? C.green : C.red,
-                      }]}>
-                        <Text style={[styles.infoLabel, { fontWeight: '700', fontSize: 14 }]}>Statut</Text>
-                        <Text style={[styles.infoValue, {
-                          fontWeight: '800',
-                          fontSize: 16,
-                          color: isExpedie(scannedData) ? C.green : C.red
-                        }]}>
-                          {isExpedie(scannedData) ? '✅ Expédiée' : '⏳ En attente'}
+                      <View
+                        style={[
+                          styles.infoRow,
+                          {
+                            backgroundColor: isExpedie(scannedData)
+                              ? "#E8F5E9"
+                              : "#FFEBEE",
+                            borderRadius: 8,
+                            paddingHorizontal: 12,
+                            paddingVertical: 10,
+                            borderWidth: 1,
+                            borderColor: isExpedie(scannedData)
+                              ? C.green
+                              : C.red,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.infoLabel,
+                            { fontWeight: "700", fontSize: 14 },
+                          ]}
+                        >
+                          Statut
+                        </Text>
+                        <Text
+                          style={[
+                            styles.infoValue,
+                            {
+                              fontWeight: "800",
+                              fontSize: 16,
+                              color: isExpedie(scannedData) ? C.green : C.red,
+                            },
+                          ]}
+                        >
+                          {isExpedie(scannedData)
+                            ? "✅ Expédiée"
+                            : "⏳ En attente"}
                         </Text>
                       </View>
                     </View>
@@ -958,26 +1146,43 @@ export default function ExpeditionScreen() {
                   {isExpedie(scannedData) ? (
                     <View style={styles.errorCard}>
                       <Text style={styles.errorIcon}>⚠️</Text>
-                      <Text style={styles.errorTxt}>Cette palette est déjà expédiée</Text>
-                      <Text style={styles.errorSub}>Expédiée le {formatDate(scannedData.date_expedition)}</Text>
-                      <TouchableOpacity style={styles.errorBtn} onPress={() => setScannedData(null)}>
+                      <Text style={styles.errorTxt}>
+                        Cette palette est déjà expédiée
+                      </Text>
+                      <Text style={styles.errorSub}>
+                        Expédiée le {formatDate(scannedData.date_expedition)}
+                      </Text>
+                      <TouchableOpacity
+                        style={styles.errorBtn}
+                        onPress={() => setScannedData(null)}
+                      >
                         <Text style={styles.errorBtnTxt}>Fermer</Text>
                       </TouchableOpacity>
                     </View>
                   ) : (
                     <>
-                      <TouchableOpacity style={styles.validBtn} onPress={validerExpedition} disabled={loading}>
+                      <TouchableOpacity
+                        style={styles.validBtn}
+                        onPress={validerExpedition}
+                        disabled={loading}
+                      >
                         {loading ? (
                           <ActivityIndicator color="#FFF" />
                         ) : (
                           <>
-                            <Text style={styles.btnTxt}>VALIDER L&apos;EXPÉDITION</Text>
-                            <Text style={styles.btnSub}>Confirmer la sortie du stock</Text>
+                            <Text style={styles.btnTxt}>
+                              VALIDER L&apos;EXPÉDITION
+                            </Text>
+                            <Text style={styles.btnSub}>
+                              Confirmer la sortie du stock
+                            </Text>
                           </>
                         )}
                       </TouchableOpacity>
 
-                      <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+                      <View
+                        style={{ flexDirection: "row", gap: 10, marginTop: 10 }}
+                      >
                         <TouchableOpacity
                           style={[styles.printBtn, { flex: 1 }]}
                           onPress={imprimerPalette}
@@ -985,7 +1190,10 @@ export default function ExpeditionScreen() {
                           <Text style={styles.printBtnTxt}>🖨️ Imprimer</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
-                          style={[styles.printBtn, { flex: 1, backgroundColor: C.blue }]}
+                          style={[
+                            styles.printBtn,
+                            { flex: 1, backgroundColor: C.blue },
+                          ]}
                           onPress={telechargerPdf}
                         >
                           <Text style={styles.printBtnTxt}>⬇️ PDF</Text>
@@ -1011,7 +1219,10 @@ export default function ExpeditionScreen() {
                   onChangeText={handleSearch}
                 />
                 {searchTerm.length > 0 && (
-                  <TouchableOpacity onPress={clearSearch} style={styles.clearSearchContainer}>
+                  <TouchableOpacity
+                    onPress={clearSearch}
+                    style={styles.clearSearchContainer}
+                  >
                     <Text style={styles.clearSearchText}>✕</Text>
                   </TouchableOpacity>
                 )}
@@ -1019,7 +1230,8 @@ export default function ExpeditionScreen() {
 
               {totalItems > 0 && (
                 <Text style={styles.histCounter}>
-                  {totalItems} palette{totalItems > 1 ? 's' : ''} expédiée{totalItems > 1 ? 's' : ''}
+                  {totalItems} palette{totalItems > 1 ? "s" : ""} expédiée
+                  {totalItems > 1 ? "s" : ""}
                 </Text>
               )}
 
@@ -1031,36 +1243,54 @@ export default function ExpeditionScreen() {
                 <View style={styles.emptyContainer}>
                   <Text style={styles.emptyIcon}>📭</Text>
                   <Text style={styles.emptyTitle}>Aucune expédition</Text>
-                  <Text style={styles.emptySub}>Les palettes expédiées apparaîtront ici</Text>
+                  <Text style={styles.emptySub}>
+                    Les palettes expédiées apparaîtront ici
+                  </Text>
                 </View>
               ) : (
                 <>
                   {historique.map((item, index) => (
                     <View key={index} style={styles.histCard}>
                       <View style={styles.histCardHeader}>
-                        <Text style={styles.histPalNum}>{item.palette || item.codeDeclaration || "N/A"}</Text>
+                        <Text style={styles.histPalNum}>
+                          {item.palette || item.codeDeclaration || "N/A"}
+                        </Text>
                         <View style={styles.histStatusBadge}>
                           <Text style={styles.histStatusText}>✅ Expédiée</Text>
                         </View>
                       </View>
-                      <Text style={styles.histArticle}>📦 {item.article || "Article inconnu"}</Text>
+                      <Text style={styles.histArticle}>
+                        📦 {item.article || "Article inconnu"}
+                      </Text>
 
                       <View style={styles.histDetails}>
                         <View style={styles.histDetailRow}>
                           <Text style={styles.histDetailLabel}>🏭 OF</Text>
-                          <Text style={styles.histDetailValue}>{item.numOF || "N/A"}</Text>
+                          <Text style={styles.histDetailValue}>
+                            {item.numOF || "N/A"}
+                          </Text>
                         </View>
                         <View style={styles.histDetailRow}>
                           <Text style={styles.histDetailLabel}>🏷️ Lot</Text>
-                          <Text style={styles.histDetailValue}>{item.lot || "N/A"}</Text>
+                          <Text style={styles.histDetailValue}>
+                            {item.lot || "N/A"}
+                          </Text>
                         </View>
                         <View style={styles.histDetailRow}>
-                          <Text style={styles.histDetailLabel}>📊 Qté totale</Text>
-                          <Text style={styles.histDetailValue}>{item.quantiteTotale || 0} {item.unite || "CAR"}</Text>
+                          <Text style={styles.histDetailLabel}>
+                            📊 Qté totale
+                          </Text>
+                          <Text style={styles.histDetailValue}>
+                            {item.quantiteTotale || 0} {item.unite || "CAR"}
+                          </Text>
                         </View>
                         <View style={styles.histDetailRow}>
-                          <Text style={styles.histDetailLabel}>📅 Expédié le</Text>
-                          <Text style={styles.histDetailValue}>{formatDate(item.date_expedition)}</Text>
+                          <Text style={styles.histDetailLabel}>
+                            📅 Expédié le
+                          </Text>
+                          <Text style={styles.histDetailValue}>
+                            {formatDate(item.date_expedition)}
+                          </Text>
                         </View>
                       </View>
 
@@ -1071,8 +1301,13 @@ export default function ExpeditionScreen() {
                           </Text>
                           {item.sousLots.map((sl, i) => (
                             <View key={i} style={styles.sousLotRow}>
-                              <Text style={styles.sousLotName}>{sl.sousLot || "N/A"}</Text>
-                              <Text style={styles.sousLotQty}>{sl.quantiteLancee || 0} {sl.unite || item.unite || ""}</Text>
+                              <Text style={styles.sousLotName}>
+                                {sl.sousLot || "N/A"}
+                              </Text>
+                              <Text style={styles.sousLotQty}>
+                                {sl.quantiteLancee || 0}{" "}
+                                {sl.unite || item.unite || ""}
+                              </Text>
                             </View>
                           ))}
                         </View>
@@ -1083,21 +1318,44 @@ export default function ExpeditionScreen() {
                   {totalPages > 1 && (
                     <View style={styles.paginationWrapper}>
                       <TouchableOpacity
-                        style={[styles.pagBtn, currentPage === 1 && styles.pagBtnDisabled]}
+                        style={[
+                          styles.pagBtn,
+                          currentPage === 1 && styles.pagBtnDisabled,
+                        ]}
                         onPress={() => goToPage(currentPage - 1)}
                         disabled={currentPage === 1 || loadingHist}
                       >
-                        <Text style={[styles.pagBtnTxt, currentPage === 1 && styles.pagBtnTxtDisabled]}>◀ Précédent</Text>
+                        <Text
+                          style={[
+                            styles.pagBtnTxt,
+                            currentPage === 1 && styles.pagBtnTxtDisabled,
+                          ]}
+                        >
+                          ◀ Précédent
+                        </Text>
                       </TouchableOpacity>
                       <View style={styles.pageBadge}>
-                        <Text style={styles.pageBadgeTxt}>{currentPage} / {totalPages}</Text>
+                        <Text style={styles.pageBadgeTxt}>
+                          {currentPage} / {totalPages}
+                        </Text>
                       </View>
                       <TouchableOpacity
-                        style={[styles.pagBtn, currentPage === totalPages && styles.pagBtnDisabled]}
+                        style={[
+                          styles.pagBtn,
+                          currentPage === totalPages && styles.pagBtnDisabled,
+                        ]}
                         onPress={() => goToPage(currentPage + 1)}
                         disabled={currentPage === totalPages || loadingHist}
                       >
-                        <Text style={[styles.pagBtnTxt, currentPage === totalPages && styles.pagBtnTxtDisabled]}>Suivant ▶</Text>
+                        <Text
+                          style={[
+                            styles.pagBtnTxt,
+                            currentPage === totalPages &&
+                              styles.pagBtnTxtDisabled,
+                          ]}
+                        >
+                          Suivant ▶
+                        </Text>
                       </TouchableOpacity>
                     </View>
                   )}
@@ -1134,8 +1392,12 @@ export default function ExpeditionScreen() {
                 />
               ) : (
                 <View style={styles.chartEmpty}>
-                  <Text style={styles.chartEmptyText}>📊 Aucune donnée disponible</Text>
-                  <Text style={styles.chartEmptySub}>Les expéditions apparaîtront ici</Text>
+                  <Text style={styles.chartEmptyText}>
+                    📊 Aucune donnée disponible
+                  </Text>
+                  <Text style={styles.chartEmptySub}>
+                    Les expéditions apparaîtront ici
+                  </Text>
                 </View>
               )}
             </View>
@@ -1145,7 +1407,10 @@ export default function ExpeditionScreen() {
             <View style={styles.footerDivider} />
             <Text style={styles.copyright}>
               © 2026{" "}
-              <Text style={styles.copyrightLink} onPress={() => Linking.openURL("https://vanoiserie.tn/")}>
+              <Text
+                style={styles.copyrightLink}
+                onPress={() => Linking.openURL("https://vanoiserie.tn/")}
+              >
                 Dr. Oetker Vanoise
               </Text>{" "}
               Tous droits réservés.
@@ -1157,8 +1422,14 @@ export default function ExpeditionScreen() {
 
       {showCamera && (
         <View style={StyleSheet.absoluteFill}>
-          <CameraView style={StyleSheet.absoluteFill} onBarcodeScanned={handleBarcodeScanned} />
-          <TouchableOpacity style={styles.closeCam} onPress={() => setShowCamera(false)}>
+          <CameraView
+            style={StyleSheet.absoluteFill}
+            onBarcodeScanned={handleBarcodeScanned}
+          />
+          <TouchableOpacity
+            style={styles.closeCam}
+            onPress={() => setShowCamera(false)}
+          >
             <Text style={styles.closeCamTxt}>✕ Fermer</Text>
           </TouchableOpacity>
         </View>
@@ -1166,20 +1437,31 @@ export default function ExpeditionScreen() {
 
       {sidebarOpen && (
         <Animated.View style={[styles.overlay, { opacity: overlayAnim }]}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={closeSidebar} />
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            onPress={closeSidebar}
+          />
         </Animated.View>
       )}
 
-      <Animated.View style={[styles.sidebar, { transform: [{ translateX: slideAnim }] }]}>
+      <Animated.View
+        style={[styles.sidebar, { transform: [{ translateX: slideAnim }] }]}
+      >
         <View style={sb.stripe} />
         <View style={sb.logoBlock}>
-          <Image source={require("../../assets/favicon.png")} style={sb.logoImg} resizeMode="contain" />
+          <Image
+            source={require("../../assets/favicon.png")}
+            style={sb.logoImg}
+            resizeMode="contain"
+          />
           <Text style={sb.brand}>DR. OETKER</Text>
           <Text style={sb.brandSub}>VANOISE PORTAL</Text>
         </View>
         <View style={sb.header}>
           <View style={sb.avatarLg}>
-            <Text style={sb.avatarLgTxt}>{nom ? nom[0].toUpperCase() : "V"}</Text>
+            <Text style={sb.avatarLgTxt}>
+              {nom ? nom[0].toUpperCase() : "V"}
+            </Text>
           </View>
           <View>
             <Text style={sb.name}>{nom || "Opérateur"}</Text>
@@ -1199,7 +1481,14 @@ export default function ExpeditionScreen() {
             }}
           >
             <Text style={sb.itemIcon}>📦</Text>
-            <Text style={[sb.itemLabel, !showStats && !showHistorique && sb.itemLabelActive]}>Expédition</Text>
+            <Text
+              style={[
+                sb.itemLabel,
+                !showStats && !showHistorique && sb.itemLabelActive,
+              ]}
+            >
+              Expédition
+            </Text>
             {!showStats && !showHistorique && <View style={sb.pip} />}
           </TouchableOpacity>
 
@@ -1212,7 +1501,9 @@ export default function ExpeditionScreen() {
             }}
           >
             <Text style={sb.itemIcon}>📜</Text>
-            <Text style={[sb.itemLabel, showHistorique && sb.itemLabelActive]}>Historique</Text>
+            <Text style={[sb.itemLabel, showHistorique && sb.itemLabelActive]}>
+              Historique
+            </Text>
             {showHistorique && <View style={sb.pip} />}
           </TouchableOpacity>
 
@@ -1225,7 +1516,9 @@ export default function ExpeditionScreen() {
             }}
           >
             <Text style={sb.itemIcon}>📊</Text>
-            <Text style={[sb.itemLabel, showStats && sb.itemLabelActive]}>Statistiques</Text>
+            <Text style={[sb.itemLabel, showStats && sb.itemLabelActive]}>
+              Statistiques
+            </Text>
             {showStats && <View style={sb.pip} />}
           </TouchableOpacity>
 
@@ -1238,10 +1531,7 @@ export default function ExpeditionScreen() {
             </TouchableOpacity>
           )}
 
-          <TouchableOpacity style={sb.configItem} onPress={() => { closeSidebar(); router.push('/ApiConfigScreen'); }}>
-            <Text style={sb.itemIcon}>⚙️</Text>
-            <Text style={sb.itemLabel}>Configuration serveur</Text>
-          </TouchableOpacity>
+          
         </View>
         <View style={sb.footer}>
           <TouchableOpacity style={sb.logoutBtn} onPress={handleLogout}>
@@ -1278,7 +1568,12 @@ const styles = StyleSheet.create({
   },
   hamburgerIcon: { color: C.inkMid, fontSize: 20, fontWeight: "bold" },
   centerTitleContainer: { alignItems: "center" },
-  topbarTitle: { fontSize: 15, fontWeight: "800", color: C.inkMid, letterSpacing: 1 },
+  topbarTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: C.inkMid,
+    letterSpacing: 1,
+  },
   topbarSubTitle: { fontSize: 11, color: C.inkLight, marginTop: 1 },
   logoWrap: {
     width: 44,
@@ -1299,7 +1594,12 @@ const styles = StyleSheet.create({
   redRule: { height: 3, backgroundColor: C.red },
   scroll: { padding: 20, paddingBottom: 40 },
 
-  loadWrap: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
+  loadWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+  },
   loadTxt: { color: C.inkLight, fontSize: 13 },
 
   statsCard: {
@@ -1319,7 +1619,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 12,
   },
-  statsLabel: { color: "#FFD1D1", fontSize: 13, fontWeight: "600", letterSpacing: 1 },
+  statsLabel: {
+    color: "#FFD1D1",
+    fontSize: 13,
+    fontWeight: "600",
+    letterSpacing: 1,
+  },
   statsBadge: {
     backgroundColor: "rgba(255,255,255,0.2)",
     paddingHorizontal: 12,
@@ -1327,7 +1632,12 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   statsBadgeText: { color: "#FFF", fontSize: 10, fontWeight: "700" },
-  statsVal: { color: "#FFF", fontSize: 48, fontWeight: "900", marginBottom: 12 },
+  statsVal: {
+    color: "#FFF",
+    fontSize: 48,
+    fontWeight: "900",
+    marginBottom: 12,
+  },
   statsProgress: {
     height: 6,
     backgroundColor: "rgba(255,255,255,0.2)",
@@ -1355,7 +1665,12 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   scanBtnIcon: { fontSize: 40, marginBottom: 8 },
-  scanBtnTxt: { color: "#FFF", fontWeight: "700", fontSize: 16, letterSpacing: 1 },
+  scanBtnTxt: {
+    color: "#FFF",
+    fontWeight: "700",
+    fontSize: 16,
+    letterSpacing: 1,
+  },
   scanBtnSub: { color: "rgba(255,255,255,0.6)", fontSize: 12, marginTop: 4 },
 
   infoCard: {
@@ -1440,7 +1755,14 @@ const styles = StyleSheet.create({
     borderColor: C.border,
   },
   infoLabel: { fontSize: 13, color: C.inkLight, fontWeight: "600", flex: 0.45 },
-  infoValue: { fontSize: 13, color: C.ink, fontWeight: "600", flex: 0.55, textAlign: "right", flexWrap: "wrap" },
+  infoValue: {
+    fontSize: 13,
+    color: C.ink,
+    fontWeight: "600",
+    flex: 0.55,
+    textAlign: "right",
+    flexWrap: "wrap",
+  },
   infoValueHighlight: { fontSize: 15, fontWeight: "800", color: C.red },
 
   uvcRow: {
@@ -1463,7 +1785,13 @@ const styles = StyleSheet.create({
     borderBottomColor: C.border,
     marginBottom: 6,
   },
-  lotHeaderText: { fontSize: 11, fontWeight: "700", color: C.inkLight, flex: 1, textAlign: "center" },
+  lotHeaderText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: C.inkLight,
+    flex: 1,
+    textAlign: "center",
+  },
   lotRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1557,9 +1885,25 @@ const styles = StyleSheet.create({
     borderColor: C.red,
   },
   errorIcon: { fontSize: 32, marginBottom: 6 },
-  errorTxt: { color: C.red, fontWeight: "bold", fontSize: 15, textAlign: "center" },
-  errorSub: { color: C.inkLight, fontSize: 12, marginTop: 4, textAlign: "center" },
-  errorBtn: { marginTop: 10, paddingVertical: 8, paddingHorizontal: 24, backgroundColor: C.red, borderRadius: 8 },
+  errorTxt: {
+    color: C.red,
+    fontWeight: "bold",
+    fontSize: 15,
+    textAlign: "center",
+  },
+  errorSub: {
+    color: C.inkLight,
+    fontSize: 12,
+    marginTop: 4,
+    textAlign: "center",
+  },
+  errorBtn: {
+    marginTop: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 24,
+    backgroundColor: C.red,
+    borderRadius: 8,
+  },
   errorBtnTxt: { color: "#FFF", fontWeight: "600" },
 
   validBtn: {
@@ -1591,7 +1935,7 @@ const styles = StyleSheet.create({
   printBtnTxt: {
     color: "#FFF",
     fontWeight: "700",
-    fontSize: 13
+    fontSize: 13,
   },
 
   chartCard: {
@@ -1650,8 +1994,19 @@ const styles = StyleSheet.create({
   },
 
   footer: { alignItems: "center", paddingVertical: 24, marginTop: 10 },
-  footerDivider: { width: 40, height: 1, backgroundColor: C.border, borderRadius: 1, marginBottom: 16 },
-  copyright: { fontSize: 12, color: C.inkLight, textAlign: "center", lineHeight: 20 },
+  footerDivider: {
+    width: 40,
+    height: 1,
+    backgroundColor: C.border,
+    borderRadius: 1,
+    marginBottom: 16,
+  },
+  copyright: {
+    fontSize: 12,
+    color: C.inkLight,
+    textAlign: "center",
+    lineHeight: 20,
+  },
   copyrightLink: { fontSize: 12, color: C.red, fontWeight: "700" },
 
   historiqueContainer: { flex: 1, paddingBottom: 20 },
@@ -1668,7 +2023,11 @@ const styles = StyleSheet.create({
   },
   searchBarIcon: { marginRight: 10, fontSize: 16, color: C.inkLight },
   searchBarInput: { flex: 1, fontSize: 14, color: C.ink, fontWeight: "500" },
-  clearSearchContainer: { padding: 4, backgroundColor: "rgba(31,22,16,0.1)", borderRadius: 100 },
+  clearSearchContainer: {
+    padding: 4,
+    backgroundColor: "rgba(31,22,16,0.1)",
+    borderRadius: 100,
+  },
   clearSearchText: { fontSize: 10, color: C.inkMid, fontWeight: "bold" },
 
   histCounter: {
@@ -1685,7 +2044,12 @@ const styles = StyleSheet.create({
     paddingVertical: 60,
   },
   emptyIcon: { fontSize: 48, marginBottom: 16 },
-  emptyTitle: { fontSize: 18, fontWeight: "700", color: C.inkMid, marginBottom: 8 },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: C.inkMid,
+    marginBottom: 8,
+  },
   emptySub: { fontSize: 14, color: C.inkLight, textAlign: "center" },
 
   histCard: {
@@ -1704,7 +2068,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 8,
   },
-  histPalNum: { fontSize: 15, fontWeight: "800", color: C.inkMid, letterSpacing: 0.5 },
+  histPalNum: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: C.inkMid,
+    letterSpacing: 0.5,
+  },
   histStatusBadge: {
     backgroundColor: C.greenSoft,
     paddingHorizontal: 10,
@@ -1714,7 +2083,12 @@ const styles = StyleSheet.create({
     borderColor: C.green,
   },
   histStatusText: { fontSize: 10, fontWeight: "700", color: C.green },
-  histArticle: { fontSize: 14, fontWeight: "600", color: C.ink, marginBottom: 8 },
+  histArticle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: C.ink,
+    marginBottom: 8,
+  },
   histDetails: {
     backgroundColor: "#FFF",
     borderRadius: 8,
@@ -1770,7 +2144,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     elevation: 1,
   },
-  pagBtnDisabled: { backgroundColor: "#F5F5F5", borderColor: "#E0E0E0", elevation: 0 },
+  pagBtnDisabled: {
+    backgroundColor: "#F5F5F5",
+    borderColor: "#E0E0E0",
+    elevation: 0,
+  },
   pagBtnTxt: { color: C.red, fontWeight: "700", fontSize: 13 },
   pagBtnTxtDisabled: { color: "#B0B0B0" },
   pageBadge: {
@@ -1795,8 +2173,19 @@ const sb = StyleSheet.create({
     marginBottom: 4,
   },
   logoImg: { width: 189, height: 64, marginBottom: 8 },
-  brand: { fontSize: 14, fontWeight: "900", color: C.inkMid, letterSpacing: 0.5 },
-  brandSub: { fontSize: 9, fontWeight: "700", color: C.red, letterSpacing: 2, marginTop: 2 },
+  brand: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: C.inkMid,
+    letterSpacing: 0.5,
+  },
+  brandSub: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: C.red,
+    letterSpacing: 2,
+    marginTop: 2,
+  },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -1818,7 +2207,12 @@ const sb = StyleSheet.create({
   avatarLgTxt: { color: "#FFF", fontWeight: "800", fontSize: 20 },
   name: { fontSize: 15, fontWeight: "800", color: C.ink },
   role: { fontSize: 11, color: C.inkLight, marginTop: 2 },
-  sep: { height: 1, backgroundColor: C.border, marginHorizontal: 20, marginBottom: 16 },
+  sep: {
+    height: 1,
+    backgroundColor: C.border,
+    marginHorizontal: 20,
+    marginBottom: 16,
+  },
   section: { paddingHorizontal: 14 },
   sectionLabel: {
     fontSize: 9,
