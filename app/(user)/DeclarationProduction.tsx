@@ -23,7 +23,12 @@ import {
   sendToPrinter,
   type ZplData,
 } from "../../Services/printService";
-import { getConfiguredApiUrl } from "../../Services/apiService";
+import { 
+  getConfiguredApiUrl, 
+  getApiUrl, 
+  
+} from "../../Services/apiService";
+
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const SIDEBAR_WIDTH = 280;
 
@@ -44,7 +49,6 @@ export interface ArticleOF {
   designation: string;
   unite: string;
   coefUS: number;
-  // Champs supplémentaires de l'API
   id?: string;
   ZMFGFCY?: string;
   ZROU?: string;
@@ -90,7 +94,6 @@ const formatDate = (date: string | null): string => {
   try {
     const dateObj = new Date(date);
     if (isNaN(dateObj.getTime())) return date;
-
     return dateObj.toLocaleString("fr-FR", {
       day: "2-digit",
       month: "2-digit",
@@ -126,7 +129,7 @@ export default function ProductionDeclarationScreen() {
   const [userRoles, setUserRoles] = useState<string[]>([]);
   const [matricule, setMatricule] = useState("MTR-2026");
   const [apiUrl, setApiUrl] = useState("");
-  const [backend2Url, setBackend2Url] = useState(""); // ✅ URL du backend 2
+  const [backend2Url, setBackend2Url] = useState("");
   const [modeProduction, setModeProduction] = useState<"S" | "P">("S");
   const [historiquePalettes, setHistoriquePalettes] = useState<any[]>([]);
   const [loadingHist, setLoadingHist] = useState(false);
@@ -143,29 +146,30 @@ export default function ProductionDeclarationScreen() {
   const [quantiteLancee, setQuantiteLancee] = useState<string>("");
   const [savedQuantiteLancee, setSavedQuantiteLancee] = useState<string>("");
   const [lotGlobal, setLotGlobal] = useState("");
-  const [lignesProduction, setLignesProduction] = useState<ProductionLine[]>(
-    [],
-  );
+  const [lignesProduction, setLignesProduction] = useState<ProductionLine[]>([]);
   const [paletteGeneree, setPaletteGeneree] = useState<string | null>(null);
-  const [dernierePaletteLignes, setDernierePaletteLignes] = useState<
-    ProductionLine[]
-  >([]);
-  const [quantiteLanceeUVCResult, setQuantiteLanceeUVCResult] = useState<
-    number | null
-  >(null);
+  const [dernierePaletteLignes, setDernierePaletteLignes] = useState<ProductionLine[]>([]);
+  const [quantiteLanceeUVCResult, setQuantiteLanceeUVCResult] = useState<number | null>(null);
   const slideAnim = useRef(new Animated.Value(-SIDEBAR_WIDTH)).current;
   const overlayAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
+  // ✅ Récupérer le token
+  const getToken = async (): Promise<string | null> => {
+    return await AsyncStorage.getItem("access_token");
+  };
+
+  // ✅ Fonction fetch avec token
   const fetchWithToken = async (url: string, options: RequestInit = {}) => {
     try {
-      const token = await AsyncStorage.getItem("access_token");
+      const token = await getToken();
       if (!token) {
+        // Essayer de rafraîchir le token
         const newToken = await refreshAccessToken();
         if (!newToken) throw new Error("Session expirée");
       }
 
-      const finalToken = await AsyncStorage.getItem("access_token");
+      const finalToken = await getToken();
       const headers = {
         "Content-Type": "application/json",
         Authorization: `Bearer ${finalToken}`,
@@ -245,6 +249,7 @@ export default function ProductionDeclarationScreen() {
     }
   };
 
+  // ✅ Vérification des droits
   useEffect(() => {
     const checkAccess = async () => {
       try {
@@ -293,26 +298,31 @@ export default function ProductionDeclarationScreen() {
     checkAccess();
   }, []);
 
+  // ✅ Charger les URLs dynamiquement
   const loadData = async () => {
     try {
-      // ✅ Récupérer l'URL du backend 1 (votre API principale)
+      // ✅ Récupérer l'URL du backend 1
       const url = await getConfiguredApiUrl();
       setApiUrl(url);
       console.log("📌 Backend 1 URL:", url);
 
-      // ✅ Récupérer l'URL du backend 2 depuis AsyncStorage ou configuration
-      const backend2UrlStored = await AsyncStorage.getItem("backend2_url");
-      if (backend2UrlStored) {
-        setBackend2Url(backend2UrlStored);
-        console.log("📌 Backend 2 URL (stockée):", backend2UrlStored);
-      } else {
-        // URL par défaut du backend 2
-        const defaultBackend2Url = "http://172.16.10.121:4000";
-        setBackend2Url(defaultBackend2Url);
-        await AsyncStorage.setItem("backend2_url", defaultBackend2Url);
-        console.log("📌 Backend 2 URL (défaut):", defaultBackend2Url);
+      // ✅ Récupérer l'URL du backend 2 (secondaire)
+      try {
+        const secondaryUrl = await getApiUrl(true);
+        if (secondaryUrl) {
+          setBackend2Url(secondaryUrl);
+          console.log("📌 Backend 2 URL:", secondaryUrl);
+        } else {
+          // Fallback: utiliser la même URL que le backend 1
+          setBackend2Url(url);
+          console.log("📌 Backend 2 URL (fallback):", url);
+        }
+      } catch (error) {
+        console.warn("⚠️ Backend 2 non configuré, utilisation du backend 1");
+        setBackend2Url(url);
       }
 
+      // ✅ Récupérer le mode de production
       try {
         const response = await fetchWithToken(`${url}/api/config/mode`);
         if (response.ok) {
@@ -325,6 +335,7 @@ export default function ProductionDeclarationScreen() {
         console.warn("Mode non récupéré, défaut S", e);
       }
 
+      // ✅ Récupérer les infos utilisateur
       const raw = await AsyncStorage.getItem("user");
       if (raw) {
         const parsedUser: UserData = JSON.parse(raw);
@@ -427,7 +438,7 @@ export default function ProductionDeclarationScreen() {
     fetchHistorique(n, searchTerm);
   };
 
-  // ✅ Récupérer les articles depuis /api/articles (Backend 2)
+  // ✅ Récupérer les articles depuis le backend 2
   useEffect(() => {
     if (!backend2Url) return;
 
@@ -436,7 +447,7 @@ export default function ProductionDeclarationScreen() {
         const url = `${backend2Url}/api/articles`;
         console.log("🔍 Récupération des articles depuis:", url);
         
-        const token = await AsyncStorage.getItem("access_token");
+        const token = await getToken();
         const headers = {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
@@ -455,7 +466,6 @@ export default function ProductionDeclarationScreen() {
           
           setArticles(articlesData);
           
-          // Créer un Map pour une recherche rapide
           const map = new Map();
           articlesData.forEach((article: Article) => {
             map.set(article.id, article);
@@ -475,7 +485,7 @@ export default function ProductionDeclarationScreen() {
     fetchArticles();
   }, [backend2Url]);
 
-  // ✅ Récupérer les OFs depuis /api/OFMLIGNEs (Backend 2)
+  // ✅ Récupérer les OFs depuis le backend 2
   useEffect(() => {
     if (!backend2Url) return;
 
@@ -484,7 +494,7 @@ export default function ProductionDeclarationScreen() {
         const url = `${backend2Url}/api/OFMLIGNEs`;
         console.log("🔍 Récupération des OFs depuis:", url);
         
-        const token = await AsyncStorage.getItem("access_token");
+        const token = await getToken();
         const headers = {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
@@ -505,7 +515,6 @@ export default function ProductionDeclarationScreen() {
             const firstLigne = item.lignes && item.lignes.length > 0 ? item.lignes[0] : null;
             const codeArticle = firstLigne?.ZITMREF || item.ZROU || '';
             
-            // Vérifier si l'article existe dans la base
             const articleExists = articlesMap.has(codeArticle);
             
             let totalQty = 0;
@@ -602,6 +611,7 @@ export default function ProductionDeclarationScreen() {
   const supprimerLigne = (id: string) =>
     setLignesProduction(lignesProduction.filter((l) => l.id !== id));
 
+  // ✅ DÉCLARER LA PRODUCTION - Utilise les URLs dynamiques
   const validerDeclaration = async () => {
     if (
       !apiUrl ||
@@ -999,10 +1009,12 @@ export default function ProductionDeclarationScreen() {
                         📋 {selectedOFData.numOF}
                       </Text>
                       
-                      
-                         
+                     
                         
+                      
                     
+                      
+                      
                       
                       <Text style={s.infoArticleTxt}>
                         <Text style={{ fontWeight: "700" }}>📦 Article :</Text>{" "}
@@ -1675,6 +1687,9 @@ export default function ProductionDeclarationScreen() {
   );
 }
 
+// ============================================
+// STYLES (inchangés)
+// ============================================
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: C.bg },
   topbar: {
