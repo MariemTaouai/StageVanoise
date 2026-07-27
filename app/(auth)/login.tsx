@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, SafeAreaView, KeyboardAvoidingView,
-  Platform, Image, ScrollView, Alert, Linking
+  Platform, Image, ScrollView, Alert, Linking, ActivityIndicator
 } from 'react-native';
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -14,14 +14,18 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [apiUrl, setApiUrl] = useState('');
+  const [isCheckingSession, setIsCheckingSession] = useState(true);
 
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isLongPress = useRef(false);
 
-  // ✅ Récupérer l'URL sauvegardée au chargement
+  // ✅ VÉRIFIER SI UN TOKEN EXISTE DÉJÀ AU DÉMARRAGE
   useEffect(() => {
-    const loadApiUrl = async () => {
+    const checkExistingSession = async () => {
       try {
+        console.log('🔍 Vérification de session existante...');
+        
+        // 1. Récupérer l'URL
         const url = await AsyncStorage.getItem('api_url');
         if (url) {
           setApiUrl(url);
@@ -29,13 +33,73 @@ export default function LoginScreen() {
         } else {
           console.warn('⚠️ Aucune URL trouvée, redirection vers configuration');
           router.replace('/ApiConfigScreen');
+          setIsCheckingSession(false);
+          return;
         }
+
+        // 2. Vérifier si un token existe
+        const token = await AsyncStorage.getItem('access_token');
+        if (!token) {
+          console.log('🔑 Aucun token trouvé');
+          setIsCheckingSession(false);
+          return;
+        }
+
+        // 3. VÉRIFIER SI LE TOKEN EST VALIDE
+        console.log('🔑 Token trouvé, vérification...');
+        
+        try {
+          const verifyResponse = await fetch(`${url}/api/verify-auth`, {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            }
+          });
+
+          if (verifyResponse.ok) {
+            // ✅ Token valide ! Récupérer l'utilisateur et rediriger
+            const userData = await verifyResponse.json();
+            console.log('✅ Token valide, utilisateur:', userData.user?.email);
+            
+            // Récupérer les rôles
+            const roles = await AsyncStorage.getItem('user_roles');
+            const user = await AsyncStorage.getItem('user');
+            
+            if (user && roles) {
+              const parsedUser = JSON.parse(user);
+              const parsedRoles = JSON.parse(roles);
+              console.log('👤 Utilisateur:', parsedUser.nom);
+              console.log('🔑 Rôles:', parsedRoles);
+              
+              // Rediriger selon les rôles
+              redirectBasedOnRoles({ ...parsedUser, roles: parsedRoles });
+              setIsCheckingSession(false);
+              return;
+            }
+          } else {
+            // ❌ Token invalide ! Le supprimer
+            console.log('❌ Token invalide, suppression...');
+            await AsyncStorage.multiRemove([
+              'access_token',
+              'refresh_token',
+              'user',
+              'user_roles'
+            ]);
+          }
+        } catch (verifyError) {
+          // Erreur réseau, on ignore et on laisse l'utilisateur se connecter
+          console.warn('⚠️ Erreur vérification token:', verifyError);
+        }
+
+        setIsCheckingSession(false);
+        
       } catch (error) {
-        console.error('❌ Erreur chargement URL:', error);
-        router.replace('/ApiConfigScreen');
+        console.error('❌ Erreur vérification session:', error);
+        setIsCheckingSession(false);
       }
     };
-    loadApiUrl();
+
+    checkExistingSession();
   }, []);
 
   // ✅ Fonction pour rediriger selon les rôles
@@ -114,7 +178,7 @@ export default function LoginScreen() {
       });
 
       const data = await response.json();
-      console.log(' Réponse login:', JSON.stringify(data, null, 2));
+      console.log('📩 Réponse login:', JSON.stringify(data, null, 2));
 
       if (!response.ok) {
         Alert.alert('Erreur', data.message || 'Login échoué ❌');
@@ -127,7 +191,14 @@ export default function LoginScreen() {
         data.user.roles = ['User'];
       }
 
-      // ✅ STOCKER LES TOKENS
+      // ✅ STOCKER LES TOKENS (supprimer les anciens d'abord)
+      await AsyncStorage.multiRemove([
+        'access_token',
+        'refresh_token',
+        'user',
+        'user_roles'
+      ]);
+
       if (data.accessToken) {
         await AsyncStorage.setItem('access_token', data.accessToken);
         console.log('✅ Access token stocké:', data.accessToken.substring(0, 30) + '...');
@@ -185,33 +256,24 @@ export default function LoginScreen() {
       isLongPress.current = true;
       console.log('⏰ 5 secondes écoulées ! Navigation vers ApiConfigScreen');
       
-      // Rediriger vers la configuration
       router.push('/ApiConfigScreen');
-      
-      // Feedback haptique (optionnel)
-      if (Platform.OS === 'ios') {
-        // Tu peux ajouter Vibration si tu veux
-        // Vibration.vibrate(50);
-      }
-    }, 5000); // 5000ms = 5 secondes
+    }, 5000);
   };
 
   const handlePressOut = () => {
     console.log('🖱️ Press OUT - Arrêt du timer');
     
-    // Annuler le timer si le relâchement est avant 5 secondes
     if (pressTimer.current) {
       clearTimeout(pressTimer.current);
       pressTimer.current = null;
     }
     
-    // Si le long press a été déclenché, ne rien faire de plus
     if (isLongPress.current) {
       isLongPress.current = false;
     }
   };
 
-  // ✅ Nettoyer le timer au démontage du composant
+  // ✅ Nettoyer le timer
   useEffect(() => {
     return () => {
       if (pressTimer.current) {
@@ -220,22 +282,31 @@ export default function LoginScreen() {
     };
   }, []);
 
+  // ✅ AFFICHER UN LOADER PENDANT LA VÉRIFICATION DE SESSION
+  if (isCheckingSession) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loaderContainer}>
+          <ActivityIndicator size="large" color={BROWN} />
+          <Text style={styles.loaderText}>Vérification de la session...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scroll} bounces={false}>
         <View style={styles.header}>
           <View style={styles.logoWrapper}>
-            {/* ✅ LOGO AVEC LONG PRESS (5 secondes) */}
+            {/* ✅ LOGO AVEC LONG PRESS */}
             <TouchableOpacity
               activeOpacity={0.8}
               onPressIn={handlePressIn}
               onPressOut={handlePressOut}
               onPress={() => {
-                // ⚠️ Si c'est un simple clic (pas un long press)
                 if (!isLongPress.current) {
                   console.log('👆 Simple clic sur le logo');
-                  // Optionnel : ouvrir le site web ?
-                  // Linking.openURL('https://vanoiserie.tn/');
                 }
               }}
               style={styles.logoPressArea}
@@ -303,7 +374,6 @@ export default function LoginScreen() {
               </Text>
             </TouchableOpacity>
 
-          
           </KeyboardAvoidingView>
         </View>
 
@@ -311,7 +381,7 @@ export default function LoginScreen() {
           <Text style={styles.footerText}>
             Pas encore de compte ?{' '}
             <Text style={styles.footerLink} onPress={() => router.push('/(auth)/signup')}>
-              Sinscrire ›
+              S'inscrire ›
             </Text>
           </Text>
           <Text style={styles.copyright}>
@@ -343,6 +413,21 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     paddingTop: 20,
   },
+  
+  // ✅ Loader
+  loaderContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: CREAM2,
+  },
+  loaderText: {
+    marginTop: 16,
+    fontSize: 14,
+    color: BROWN,
+    fontWeight: '500',
+  },
+
   /* Header */
   header: {
     backgroundColor: CREAM,
@@ -371,14 +456,12 @@ const styles = StyleSheet.create({
   },
   logo: { width: 280, height: 120 },
   
-  // ✅ Nouveau style pour la zone cliquable du logo
   logoPressArea: {
     width: 280,
     height: 120,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 10,
-    // Optionnel : un feedback visuel au press
   },
 
   welcomeTitle: {
@@ -387,7 +470,6 @@ const styles = StyleSheet.create({
   },
   welcomeSub: { fontSize: 14, color: '#8B6347' },
 
-  // ✅ Indicateur de fonctionnalité cachée
   hiddenHint: {
     fontSize: 10,
     color: '#B89A7A',
