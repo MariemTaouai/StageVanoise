@@ -23,15 +23,17 @@ import {
   sendToPrinter,
   type ZplData,
 } from "../../Services/printService";
-import { getApiUrl, getConfiguredApiUrl } from "../../Services/apiService";
+import { getConfiguredApiUrl } from "../../Services/apiService";
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const SIDEBAR_WIDTH = 280;
 
 export interface Article {
-  codeArticle: string;
-  designation: string;
-  unite: string;
-  coefUS: number;
+  id: string;
+  GESTION: string;
+  palette: {
+    ZPCU: string;
+    ZPCUSTUCOE: string;
+  }[];
 }
 
 export interface ArticleOF {
@@ -42,6 +44,17 @@ export interface ArticleOF {
   designation: string;
   unite: string;
   coefUS: number;
+  // Champs supplémentaires de l'API
+  id?: string;
+  ZMFGFCY?: string;
+  ZROU?: string;
+  ZDATE?: string;
+  ZSTAT?: string;
+  ZENDDAT?: string;
+  lignes?: any[];
+  nomenclature?: any[];
+  articleExists?: boolean;
+  originalCodeArticle?: string;
 }
 
 export interface ProductionLine {
@@ -78,7 +91,6 @@ const formatDate = (date: string | null): string => {
     const dateObj = new Date(date);
     if (isNaN(dateObj.getTime())) return date;
 
-    // ✅ Forcer le fuseau horaire Tunisia (UTC+1)
     return dateObj.toLocaleString("fr-FR", {
       day: "2-digit",
       month: "2-digit",
@@ -92,6 +104,7 @@ const formatDate = (date: string | null): string => {
     return date;
   }
 };
+
 const Divider = ({ label }: { label: string }) => (
   <View style={div.row}>
     <Text style={div.txt}>{label}</Text>
@@ -113,6 +126,7 @@ export default function ProductionDeclarationScreen() {
   const [userRoles, setUserRoles] = useState<string[]>([]);
   const [matricule, setMatricule] = useState("MTR-2026");
   const [apiUrl, setApiUrl] = useState("");
+  const [backend2Url, setBackend2Url] = useState(""); // ✅ URL du backend 2
   const [modeProduction, setModeProduction] = useState<"S" | "P">("S");
   const [historiquePalettes, setHistoriquePalettes] = useState<any[]>([]);
   const [loadingHist, setLoadingHist] = useState(false);
@@ -120,6 +134,8 @@ export default function ProductionDeclarationScreen() {
   const [searchTerm, setSearchTerm] = useState("");
   const [hasMore, setHasMore] = useState(true);
   const [ordresFabrication, setOrdresFabrication] = useState<ArticleOF[]>([]);
+  const [articles, setArticles] = useState<Article[]>([]);
+  const [articlesMap, setArticlesMap] = useState<Map<string, Article>>(new Map());
   const [searchText, setSearchText] = useState("");
   const [selectedOF, setSelectedOF] = useState("");
   const [selectedOFData, setSelectedOFData] = useState<ArticleOF | null>(null);
@@ -140,43 +156,6 @@ export default function ProductionDeclarationScreen() {
   const slideAnim = useRef(new Animated.Value(-SIDEBAR_WIDTH)).current;
   const overlayAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
-
-  const getActiveApiUrl = async (): Promise<string> => {
-    try {
-      return await getApiUrl(true);
-    } catch {
-      return await getConfiguredApiUrl();
-    }
-  };
-
-  const normalizeOfResponse = (data: any[]): ArticleOF[] => {
-    if (!Array.isArray(data)) return [];
-
-    return data
-      .map((item) => {
-        if (item && typeof item === "object" && "numOF" in item) {
-          return item as ArticleOF;
-        }
-
-        const lignes = Array.isArray(item?.lignes) ? item.lignes : [];
-        const firstLine = lignes[0] || {};
-        const totalQty = lignes.reduce((sum: number, line: any) => {
-          const qty = Number(line?.ZEXTQTY || 0);
-          return sum + (Number.isFinite(qty) ? qty : 0);
-        }, 0);
-
-        return {
-          numOF: item?.id || item?.numOF || "",
-          codeArticle: firstLine?.ZITMREF || item?.ZROU || "",
-          quantiteLancee: totalQty,
-          statut: item?.ZSTAT || "",
-          designation: firstLine?.ZITMDES || "",
-          unite: firstLine?.ZUOM || "KG",
-          coefUS: 1,
-        } as ArticleOF;
-      })
-      .filter((item) => item.numOF);
-  };
 
   const fetchWithToken = async (url: string, options: RequestInit = {}) => {
     try {
@@ -222,7 +201,7 @@ export default function ProductionDeclarationScreen() {
       const refreshToken = await AsyncStorage.getItem("refresh_token");
       if (!refreshToken) return null;
 
-      const url = await getActiveApiUrl();
+      const url = await getConfiguredApiUrl();
       const response = await fetch(`${url}/refresh-token`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -244,7 +223,7 @@ export default function ProductionDeclarationScreen() {
   const clearTokensAndLogout = async () => {
     try {
       const refreshToken = await AsyncStorage.getItem("refresh_token");
-      const url = await getActiveApiUrl();
+      const url = await getConfiguredApiUrl();
       if (refreshToken) {
         await fetch(`${url}/logout`, {
           method: "POST",
@@ -316,8 +295,23 @@ export default function ProductionDeclarationScreen() {
 
   const loadData = async () => {
     try {
-      const url = await getActiveApiUrl();
+      // ✅ Récupérer l'URL du backend 1 (votre API principale)
+      const url = await getConfiguredApiUrl();
       setApiUrl(url);
+      console.log("📌 Backend 1 URL:", url);
+
+      // ✅ Récupérer l'URL du backend 2 depuis AsyncStorage ou configuration
+      const backend2UrlStored = await AsyncStorage.getItem("backend2_url");
+      if (backend2UrlStored) {
+        setBackend2Url(backend2UrlStored);
+        console.log("📌 Backend 2 URL (stockée):", backend2UrlStored);
+      } else {
+        // URL par défaut du backend 2
+        const defaultBackend2Url = "http://172.16.10.121:4000";
+        setBackend2Url(defaultBackend2Url);
+        await AsyncStorage.setItem("backend2_url", defaultBackend2Url);
+        console.log("📌 Backend 2 URL (défaut):", defaultBackend2Url);
+      }
 
       try {
         const response = await fetchWithToken(`${url}/api/config/mode`);
@@ -433,31 +427,157 @@ export default function ProductionDeclarationScreen() {
     fetchHistorique(n, searchTerm);
   };
 
+  // ✅ Récupérer les articles depuis /api/articles (Backend 2)
   useEffect(() => {
-    if (!apiUrl) return;
-    const fetchOFs = async () => {
+    if (!backend2Url) return;
+
+    const fetchArticles = async () => {
       try {
-        const url = `${apiUrl}/api/OFMLIGNEs?search=${encodeURIComponent(searchText)}`;
-        const response = await fetchWithToken(url);
+        const url = `${backend2Url}/api/articles`;
+        console.log("🔍 Récupération des articles depuis:", url);
+        
+        const token = await AsyncStorage.getItem("access_token");
+        const headers = {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        };
+        
+        const response = await fetch(url, { headers });
+        
         if (response.ok) {
           const data = await response.json();
-          const normalizedOfs = normalizeOfResponse(data);
-          console.log("📋 OFs reçus:", normalizedOfs);
-          setOrdresFabrication(normalizedOfs);
+          console.log("📦 Articles reçus:", data);
+          
+          let articlesData = Array.isArray(data) ? data : [];
+          if (!Array.isArray(data) && data.data) {
+            articlesData = Array.isArray(data.data) ? data.data : [];
+          }
+          
+          setArticles(articlesData);
+          
+          // Créer un Map pour une recherche rapide
+          const map = new Map();
+          articlesData.forEach((article: Article) => {
+            map.set(article.id, article);
+          });
+          setArticlesMap(map);
+          
+          console.log(`✅ ${articlesData.length} articles chargés`);
+          console.log('📋 Codes articles:', Array.from(map.keys()));
+        } else {
+          console.error("❌ Erreur récupération articles:", response.status);
+        }
+      } catch (e: any) {
+        console.error("❌ Erreur récupération articles:", e);
+      }
+    };
+    
+    fetchArticles();
+  }, [backend2Url]);
+
+  // ✅ Récupérer les OFs depuis /api/OFMLIGNEs (Backend 2)
+  useEffect(() => {
+    if (!backend2Url) return;
+
+    const fetchOFs = async () => {
+      try {
+        const url = `${backend2Url}/api/OFMLIGNEs`;
+        console.log("🔍 Récupération des OFs depuis:", url);
+        
+        const token = await AsyncStorage.getItem("access_token");
+        const headers = {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        };
+        
+        const response = await fetch(url, { headers });
+        
+        if (response.ok) {
+          const data = await response.json();
+          console.log("📋 OFs reçus:", data);
+          
+          let ofsData = Array.isArray(data) ? data : [];
+          if (!Array.isArray(data) && data.data) {
+            ofsData = Array.isArray(data.data) ? data.data : [];
+          }
+          
+          const mappedData: ArticleOF[] = ofsData.map((item: any) => {
+            const firstLigne = item.lignes && item.lignes.length > 0 ? item.lignes[0] : null;
+            const codeArticle = firstLigne?.ZITMREF || item.ZROU || '';
+            
+            // Vérifier si l'article existe dans la base
+            const articleExists = articlesMap.has(codeArticle);
+            
+            let totalQty = 0;
+            if (item.lignes && Array.isArray(item.lignes)) {
+              totalQty = item.lignes.reduce((sum: number, ligne: any) => {
+                const qty = parseFloat(ligne.ZEXTQTY) || 0;
+                return sum + qty;
+              }, 0);
+            }
+            
+            return {
+              numOF: item.id || item.numOF || '',
+              codeArticle: codeArticle,
+              designation: firstLigne?.ZITMDES || item.ZROU || 'OF sans désignation',
+              unite: firstLigne?.ZUOM || 'CAR',
+              coefUS: 1,
+              quantiteLancee: totalQty || parseFloat(firstLigne?.ZEXTQTY) || 0,
+              statut: item.ZSTAT || 'ACTIF',
+              articleExists: articleExists,
+              id: item.id,
+              ZMFGFCY: item.ZMFGFCY,
+              ZROU: item.ZROU,
+              ZDATE: item.ZDATE,
+              ZSTAT: item.ZSTAT,
+              ZENDDAT: item.ZENDDAT,
+              lignes: item.lignes,
+              nomenclature: item.nomenclature,
+            };
+          });
+          
+          let filteredData = mappedData;
+          if (searchText.trim()) {
+            const search = searchText.toLowerCase();
+            filteredData = mappedData.filter((of) => 
+              of.numOF?.toLowerCase().includes(search) ||
+              of.codeArticle?.toLowerCase().includes(search) ||
+              of.designation?.toLowerCase().includes(search)
+            );
+          }
+          
+          console.log("📋 OFs formatés:", filteredData);
+          setOrdresFabrication(filteredData);
+        } else if (response.status === 404) {
+          console.error("❌ API non trouvée. Vérifiez l'URL:", url);
+          Alert.alert(
+            "Erreur de connexion",
+            "Impossible de contacter le serveur. Vérifiez que le serveur est accessible."
+          );
+        } else {
+          console.error("❌ Erreur HTTP:", response.status);
+          const errorText = await response.text();
+          console.error("❌ Détails:", errorText);
         }
       } catch (e: any) {
         console.error("❌ Erreur OF:", e);
         if (e.message?.includes("Session expirée")) {
           Alert.alert("⏳ Session expirée", "Veuillez vous reconnecter.");
           await clearTokensAndLogout();
+        } else {
+          Alert.alert(
+            "Erreur réseau",
+            "Impossible de se connecter au serveur. Vérifiez votre connexion."
+          );
         }
       } finally {
         setLoading(false);
       }
     };
+    
     const t = setTimeout(fetchOFs, 300);
     return () => clearTimeout(t);
-  }, [searchText, apiUrl]);
+  }, [searchText, articlesMap, backend2Url]);
 
   // ── GESTION PALETTE ──
   const ajouterLigne = () => {
@@ -495,6 +615,86 @@ export default function ProductionDeclarationScreen() {
 
     try {
       setLoading(true);
+
+      // ═══════════════════════════════════════════════════════════
+      // ÉTAPE 1 : Vérifier/créer l'ARTICLE dans le backend 1
+      // ═══════════════════════════════════════════════════════════
+      console.log(`🔄 Vérification/création de l'article dans backend 1: ${selectedOFData.codeArticle}`);
+
+      try {
+        // Récupérer les infos de l'article depuis le backend 2
+        const articleResponse = await fetch(
+          `${backend2Url}/api/articles/${encodeURIComponent(selectedOFData.codeArticle)}`,
+          { headers: { "Content-Type": "application/json" } },
+        );
+
+        let designationFinale = selectedOFData.designation;
+        let uniteFinale = selectedOFData.unite || 'CAR';
+        let coefUSFinal = selectedOFData.coefUS || 1;
+
+        if (articleResponse.ok) {
+          const articleBackend2 = await articleResponse.json();
+          designationFinale = articleBackend2.designation || designationFinale;
+          uniteFinale = articleBackend2.unite || uniteFinale;
+          coefUSFinal = articleBackend2.coefUS || coefUSFinal;
+        }
+
+        // Créer l'article dans le backend 1
+        const createArticleResponse = await fetchWithToken(`${apiUrl}/api/articles`, {
+          method: 'POST',
+          body: JSON.stringify({
+            codeArticle: selectedOFData.codeArticle,
+            designation: designationFinale,
+            unite: uniteFinale,
+            coefUS: coefUSFinal,
+          }),
+        });
+
+        if (!createArticleResponse.ok) {
+          const errorData = await createArticleResponse.json().catch(() => ({}));
+          throw new Error(errorData.error || "Impossible de créer/vérifier l'article dans le backend 1.");
+        }
+
+        console.log('✅ Article vérifié/créé dans le backend 1');
+      } catch (createError: any) {
+        console.error('❌ Erreur création article:', createError);
+        Alert.alert("Erreur", `Synchronisation article échouée : ${createError.message}`);
+        setLoading(false);
+        return;
+      }
+
+      // ═══════════════════════════════════════════════════════════
+      // ÉTAPE 2 : Vérifier/créer l'OF dans le backend 1
+      // ═══════════════════════════════════════════════════════════
+      console.log(`🔄 Vérification/création de l'OF dans backend 1: ${selectedOFData.numOF}`);
+
+      try {
+        const createOFResponse = await fetchWithToken(`${apiUrl}/api/ofs`, {
+          method: 'POST',
+          body: JSON.stringify({
+            numOF: selectedOFData.numOF,
+            codeArticle: selectedOFData.codeArticle,
+            quantiteLancee: selectedOFData.quantiteLancee,
+            statut: selectedOFData.ZSTAT === '1' ? 'Actif' : 'Créé',
+          }),
+        });
+
+        if (!createOFResponse.ok) {
+          const errorData = await createOFResponse.json().catch(() => ({}));
+          throw new Error(errorData.error || "Impossible de créer/vérifier l'OF dans le backend 1.");
+        }
+
+        console.log('✅ OF vérifié/créé dans le backend 1');
+      } catch (createOFError: any) {
+        console.error('❌ Erreur création OF:', createOFError);
+        Alert.alert("Erreur", `Synchronisation OF échouée : ${createOFError.message}`);
+        setLoading(false);
+        return;
+      }
+
+      // ═══════════════════════════════════════════════════════════
+      // ÉTAPE 3 : Déclarer la production
+      // ═══════════════════════════════════════════════════════════
       const payload = {
         numOF: selectedOFData.numOF,
         codeArticle: selectedOFData.codeArticle,
@@ -547,6 +747,7 @@ export default function ProductionDeclarationScreen() {
         throw new Error(result.error || "Erreur serveur");
       }
     } catch (error: any) {
+      console.error("❌ Production declarer error:", error);
       Alert.alert("Erreur", error.message);
       if (error.message?.includes("Session expirée")) {
         await clearTokensAndLogout();
@@ -730,7 +931,7 @@ export default function ProductionDeclarationScreen() {
                   </Text>
                   <TextInput
                     style={s.input}
-                    placeholder="Tapez pour filtrer (Ex: OF-2026...)"
+                    placeholder="Tapez pour filtrer (Ex: OF2303-SGR00260...)"
                     value={searchText}
                     onChangeText={(txt) => {
                       setSearchText(txt);
@@ -757,7 +958,7 @@ export default function ProductionDeclarationScreen() {
                             onPress={() => {
                               setSelectedOF(of.numOF);
                               setSelectedOFData(of);
-                              setSearchText(`${of.numOF} `);
+                              setSearchText(`${of.numOF} - ${of.designation}`);
                               setQuantiteLancee(String(of.quantiteLancee));
                               setQuantiteLanceeUVCResult(
                                 of.quantiteLancee * (of.coefUS || 1),
@@ -765,7 +966,22 @@ export default function ProductionDeclarationScreen() {
                               setShowDropdown(false);
                             }}
                           >
-                            <Text style={s.dropdownItemTxt}>{of.numOF}</Text>
+                            <Text style={s.dropdownItemTxt}>
+                              {of.numOF}
+                            </Text>
+                            <Text style={{ fontSize: 11, color: C.inkLight }}>
+                              📦 {of.codeArticle} - Qté: {of.quantiteLancee} {of.unite}
+                            </Text>
+                            {!of.articleExists && (
+                              <Text style={{ fontSize: 10, color: C.red, fontWeight: 'bold' }}>
+                                ⚠️ Article manquant
+                              </Text>
+                            )}
+                            {of.articleExists && (
+                              <Text style={{ fontSize: 10, color: C.green }}>
+                                ✅ Article existant
+                              </Text>
+                            )}
                           </TouchableOpacity>
                         ))}
                       </ScrollView>
@@ -782,6 +998,12 @@ export default function ProductionDeclarationScreen() {
                       >
                         📋 {selectedOFData.numOF}
                       </Text>
+                      
+                      
+                         
+                        
+                    
+                      
                       <Text style={s.infoArticleTxt}>
                         <Text style={{ fontWeight: "700" }}>📦 Article :</Text>{" "}
                         {selectedOFData.codeArticle
@@ -828,11 +1050,20 @@ export default function ProductionDeclarationScreen() {
                           {selectedOFData.unite || "CAR"}
                         </Text>
                       )}
+                      {/* Affichage des infos supplémentaires de l'OF */}
+                      {selectedOFData.ZDATE && (
+                        <Text style={[s.infoArticleTxt, { fontSize: 12, color: C.inkLight }]}>
+                          📅 Date: {selectedOFData.ZDATE}
+                        </Text>
+                      )}
+                      {selectedOFData.ZSTAT && (
+                        <Text style={[s.infoArticleTxt, { fontSize: 12, color: C.inkLight }]}>
+                          📊 Statut: {selectedOFData.ZSTAT === '1' ? 'Actif' : 'Inactif'}
+                        </Text>
+                      )}
                     </View>
                   )}
                 </View>
-
-                {/* Quantité Lancée - AFFICHAGE AUTO */}
 
                 {/* Lot Global */}
                 <Divider label="IDENTIFICATION DU LOT GLOBAL" />
@@ -877,20 +1108,23 @@ export default function ProductionDeclarationScreen() {
                             }
                           />
                         </View>
-                        <TextInput
-                          style={s.input}
-                          placeholder="Quantité"
-                          keyboardType="numeric"
-                          value={
-                            ligne.quantite === null ||
-                            ligne.quantite === undefined
-                              ? ""
-                              : String(ligne.quantite)
-                          }
-                          onChangeText={(txt) =>
-                            updateLigne(ligne.id, "quantite", txt)
-                          }
-                        />
+                        <View style={{ flex: 1 }}>
+                          <Text style={s.fieldLabel}>QUANTITÉ</Text>
+                          <TextInput
+                            style={s.input}
+                            placeholder="Qté"
+                            keyboardType="numeric"
+                            value={
+                              ligne.quantite === null ||
+                              ligne.quantite === undefined
+                                ? ""
+                                : String(ligne.quantite)
+                            }
+                            onChangeText={(txt) =>
+                              updateLigne(ligne.id, "quantite", txt)
+                            }
+                          />
+                        </View>
                       </View>
 
                       {modeProduction === "S" &&
